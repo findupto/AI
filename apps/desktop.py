@@ -1,3 +1,4 @@
+import html
 import sys
 from pathlib import Path
 from threading import Event
@@ -159,11 +160,15 @@ class Window(QMainWindow):
         self.sessions.blockSignals(False)
         self.load_session_view()
 
+    def render_message(self, role, content):
+        label = "You" if role == "user" else "Findupto AI"
+        safe = html.escape(content).replace("\n", "<br>")
+        self.chat.append(f"<p><b>{label}:</b><br>{safe}</p>")
+
     def load_session_view(self):
         self.chat.clear()
         for message in self.o.session_messages():
-            label = "You" if message["role"] == "user" else "Findupto AI"
-            self.chat.append(f"<b>{label}:</b> {message['content']}")
+            self.render_message(message["role"], message["content"])
 
     def switch_session(self, index):
         if index < 0 or (self.worker and self.worker.isRunning()) or self.pending_tool:
@@ -206,10 +211,10 @@ class Window(QMainWindow):
         text = self.input.text().strip()
         if not text or (self.worker and self.worker.isRunning()) or self.pending_tool:
             return
-        self.chat.append(f"<b>You:</b> {text}")
+        self.chat.append(f"<p><b>You:</b><br>{html.escape(text).replace(chr(10), '<br>')}</p>")
         self.input.clear()
         self._stream_text = ""
-        self.chat.append("<b>Findupto AI:</b> ")
+        self.chat.append("<p><b>Findupto AI:</b><br>")
         self.status.setText("Generating locally…")
         self.stop_btn.setEnabled(True)
         self.worker = StreamWorker(self.o.prepare_agent_request_stream, text)
@@ -233,7 +238,7 @@ class Window(QMainWindow):
     def receive_stream(self, result):
         self.stop_btn.setEnabled(False)
         if not result["ok"]:
-            self.chat.append(f"<b>Error:</b> {result['value']}")
+            self.chat.append(f"<b>Error:</b> {html.escape(str(result['value']))}")
             self.status.setText("Local AI • error")
             return
         value = result["value"]
@@ -242,9 +247,11 @@ class Window(QMainWindow):
             self.show_sources(value.get("sources", []))
             self.approval_label.setText(f"Allow tool '{value['tool']}' to run?")
             self.approval.show()
+            self.refresh_sessions()
             self.status.setText("Waiting for tool approval")
             return
         self.show_sources(value.get("sources", []))
+        self.refresh_sessions()
         if value.get("kind") == "stopped":
             self.status.setText("Generation stopped")
             return
@@ -255,7 +262,7 @@ class Window(QMainWindow):
             return
         self.chat.append("<b>Sources:</b>")
         for source in sources:
-            self.chat.append(f"• {source}")
+            self.chat.append(f"• {html.escape(source)}")
 
     def choose_model(self):
         if self.worker and self.worker.isRunning() or self.pending_tool:
@@ -298,10 +305,10 @@ class Window(QMainWindow):
 
     def receive_tool_result(self, result):
         if not result["ok"]:
-            self.chat.append(f"<b>Error:</b> {result['value']}")
+            self.chat.append(f"<b>Error:</b> {html.escape(str(result['value']))}")
             self.status.setText("Local AI • error")
             return
-        self.chat.append(f"<b>Findupto AI:</b> {result['value']}")
+        self.render_message("assistant", result["value"])
         self.status.setText("Local AI")
 
     def ingest(self):
