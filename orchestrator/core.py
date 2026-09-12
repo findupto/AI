@@ -47,10 +47,15 @@ class Orchestrator:
     def delete_document(self, source: str):
         return self.knowledge.delete(source)
 
+    def _context(self, user_text: str):
+        rows = self.knowledge.search(user_text, 4)
+        context = "\n\n".join(f"SOURCE: {r['source']}\n{r['text']}" for r in rows)
+        sources = list(dict.fromkeys(r["source"] for r in rows))
+        return context, sources
+
     def answer(self, user_text: str) -> str:
         self.memory.add("user", user_text)
-        context_rows = self.knowledge.search(user_text, 4)
-        context = "\n\n".join(f"SOURCE: {r['source']}\n{r['text']}" for r in context_rows)
+        context, _ = self._context(user_text)
         messages = [{"role": "system", "content": SYSTEM}]
         if context:
             messages.append({"role": "system", "content": "Relevant local knowledge:\n" + context})
@@ -66,34 +71,32 @@ class Orchestrator:
 
     def prepare_agent_request(self, user_text: str):
         self.memory.add("user", user_text)
-        context_rows = self.knowledge.search(user_text, 4)
-        context = "\n\n".join(f"SOURCE: {r['source']}\n{r['text']}" for r in context_rows)
+        context, sources = self._context(user_text)
         draft = self.agent.run(user_text, context)
         request = self.agent.parse_call(draft)
         if request is None:
             self.memory.add("assistant", draft)
-            return {"kind": "answer", "text": draft}
+            return {"kind": "answer", "text": draft, "sources": sources}
         if not request.tool.requires_confirmation:
             ok, result = request.tool.handler(request.tool_input)
             final = self.agent.finalize_tool_result(user_text, request, ok, result)
             self.memory.add("assistant", final)
-            return {"kind": "answer", "text": final}
-        return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input}
+            return {"kind": "answer", "text": final, "sources": sources}
+        return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input, "sources": sources}
 
     def prepare_agent_request_stream(self, user_text: str, on_token, stop_event: Event | None = None):
         self.memory.add("user", user_text)
-        context_rows = self.knowledge.search(user_text, 4)
-        context = "\n\n".join(f"SOURCE: {r['source']}\n{r['text']}" for r in context_rows)
+        context, sources = self._context(user_text)
         draft = self.agent.run_stream(user_text, context, on_token, stop_event)
         if stop_event and stop_event.is_set():
             if draft:
                 self.memory.add("assistant", draft)
-            return {"kind": "stopped", "text": draft}
+            return {"kind": "stopped", "text": draft, "sources": sources}
         request = self.agent.parse_call(draft)
         if request is None:
             self.memory.add("assistant", draft)
-            return {"kind": "answer", "text": draft}
-        return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input}
+            return {"kind": "answer", "text": draft, "sources": sources}
+        return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input, "sources": sources}
 
     def approve_tool(self, user_text: str, tool_name: str, tool_input: str):
         tool = self.agent.tools.get(tool_name)
