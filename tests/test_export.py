@@ -1,9 +1,15 @@
+from apps.export_conversation import select_session
 from orchestrator.export import session_to_html, session_to_markdown
 
 
 MESSAGES = [
     {"role": "user", "content": "Hello <world>", "created_at": "2026-09-12 10:00"},
     {"role": "assistant", "content": "**Welcome**\n\nUse `local AI`.", "created_at": "2026-09-12 10:01"},
+]
+
+SESSIONS = [
+    {"id": "abc", "title": "General", "created_at": "2026-09-12 09:00"},
+    {"id": "def", "title": "Project Chat", "created_at": "2026-09-12 09:01"},
 ]
 
 
@@ -20,3 +26,9 @@ def test_session_to_html_escapes_content():
     assert "Hello &lt;world&gt;" in output
     assert "<b>Welcome</b>" not in output
     assert "**Welcome**" in output
+
+
+def test_select_session_matches_id_or_title_case_insensitively():
+    assert select_session(SESSIONS, "def")["title"] == "Project Chat"
+    assert select_session(SESSIONS, "project chat")["id"] == "def"
+    assert select_session(SESSIONS, "missing") is None
