@@ -14,6 +14,7 @@ A self-hosted desktop AI foundation derived from the supplied architecture roadm
 - Conversation search, per-message copy and streaming generation controls
 - Desktop preferences for appearance, timestamps, font size and window restoration
 - Conversation export to Markdown, HTML and JSON through the CLI
+- Structured response-quality and benchmark evaluation utilities
 - Windows-friendly launcher and cross-platform Python entry point
 - Clear extension points for vision, image/video, audio, fine-tuning and evaluation
 
@@ -36,7 +37,7 @@ List saved conversations:
 findupto-export --list-sessions
 ```
 
-Export the active conversation:
+Export a conversation:
 
 ```bash
 findupto-export chat.md
@@ -49,6 +50,28 @@ Export a specific conversation by session ID or exact title:
 ```bash
 findupto-export chat.json --session "Project Chat"
 ```
+
+Write Markdown directly to stdout:
+
+```bash
+findupto-export --stdout
+findupto-export --stdout --session "Project Chat"
+```
+
+## Response evaluation
+Evaluate one response per line:
+
+```bash
+findupto-quality responses.txt --min-length 20
+```
+
+Run structured benchmark cases from JSON:
+
+```bash
+python -m evaluation.benchmark cases.json
+```
+
+Each benchmark case can contain `id`, `response`, and a `required` list of phrases that must appear in the response.
 
 ## Project structure
 ```text
