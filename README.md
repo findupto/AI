@@ -10,7 +10,10 @@ A self-hosted desktop AI foundation derived from the supplied architecture roadm
 - Local document ingestion for TXT, Markdown, JSON and PDF text extraction
 - Sandboxed Python tool with timeout and restricted environment
 - Optional web research hook, disabled by default
-- Persistent conversation history and basic memory
+- Persistent multi-chat conversation history with automatic titles
+- Conversation search, per-message copy and streaming generation controls
+- Desktop preferences for appearance, timestamps, font size and window restoration
+- Conversation export to Markdown, HTML and JSON through the CLI
 - Windows-friendly launcher and cross-platform Python entry point
 - Clear extension points for vision, image/video, audio, fine-tuning and evaluation
 
@@ -25,6 +28,27 @@ This repository is the software foundation, not a pre-trained frontier model. Th
 5. For Windows, double-click `Start_AI.bat`.
 
 The application can run fully offline when a local model and local knowledge are used. Network research is an explicit optional capability.
+
+## Conversation export
+List saved conversations:
+
+```bash
+findupto-export --list-sessions
+```
+
+Export the active conversation:
+
+```bash
+findupto-export chat.md
+findupto-export chat.html
+findupto-export chat.json
+```
+
+Export a specific conversation by session ID or exact title:
+
+```bash
+findupto-export chat.json --session "Project Chat"
+```
 
 ## Project structure
 ```text
