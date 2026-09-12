@@ -3,11 +3,16 @@ from pathlib import Path
 
 
 class LocalLLM:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, base_dir: Path | None = None):
         self.config = config
         self.model = None
         self.error = None
-        path = Path(os.getenv("FINDUPTO_MODEL_PATH", config["model"]["path"]))
+        self.base_dir = (base_dir or Path.cwd()).resolve()
+        raw_path = os.getenv("FINDUPTO_MODEL_PATH", config["model"]["path"])
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = self.base_dir / path
+        path = path.resolve()
         if not path.exists():
             self.error = f"Local model not found: {path}"
             return
