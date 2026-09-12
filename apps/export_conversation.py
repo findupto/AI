@@ -20,6 +20,7 @@ def main():
     parser.add_argument("output", nargs="?", help="Output .md, .html, or .json file")
     parser.add_argument("--session", help="Session ID or exact session title to export")
     parser.add_argument("--list-sessions", action="store_true", help="List saved sessions and exit")
+    parser.add_argument("--stdout", action="store_true", help="Write exported content to stdout instead of a file")
     args = parser.parse_args()
 
     orchestrator = Orchestrator()
@@ -29,13 +30,10 @@ def main():
             for session in sessions:
                 print(f"{session['id']}\t{session['title']}")
             return
-        if not args.output:
-            parser.error("output is required unless --list-sessions is used")
-
-        output = Path(args.output).expanduser()
-        suffix = output.suffix.lower()
-        if suffix not in {".md", ".html", ".json"}:
-            parser.error("output must end with .md, .html, or .json")
+        if not args.output and not args.stdout:
+            parser.error("output is required unless --list-sessions or --stdout is used")
+        if args.output and args.stdout:
+            parser.error("choose either output or --stdout")
 
         selected = select_session(sessions, args.session)
         if args.session and selected is None:
@@ -45,15 +43,28 @@ def main():
         current = selected or next((s for s in sessions if s["id"] == orchestrator.session_id), None)
         title = current["title"] if current else "Conversation"
         messages = orchestrator.session_messages()
+
+        if args.stdout:
+            suffix = ".md"
+        else:
+            output = Path(args.output).expanduser()
+            suffix = output.suffix.lower()
+            if suffix not in {".md", ".html", ".json"}:
+                parser.error("output must end with .md, .html, or .json")
+
         if suffix == ".html":
             content = session_to_html(messages, title)
         elif suffix == ".json":
             content = session_to_json(messages, title)
         else:
             content = session_to_markdown(messages, title)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(content, encoding="utf-8")
-        print(output)
+
+        if args.stdout:
+            print(content, end="")
+        else:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(content, encoding="utf-8")
+            print(output)
     finally:
         orchestrator.memory.close()
         orchestrator.knowledge.close()
