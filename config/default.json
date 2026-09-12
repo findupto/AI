@@ -10,9 +10,12 @@
   },
   "memory": {"database": "data/ai.db"},
   "knowledge": {"database": "data/knowledge.db", "chunk_size": 1200, "chunk_overlap": 150},
+  "localdrive": {"root": "LocalDrive", "max_file_bytes": 2000000, "max_read_bytes": 1000000},
+  "audit": {"path": "data/audit.jsonl"},
   "security": {
     "allow_network": false,
     "allow_shell": false,
+    "shell_timeout_seconds": 30,
     "python_timeout_seconds": 8,
     "require_confirmation_for_tools": true
   }
