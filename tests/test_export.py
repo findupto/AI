@@ -1,5 +1,5 @@
 from apps.export_conversation import select_session
-from orchestrator.export import session_to_html, session_to_markdown
+from orchestrator.export import session_to_html, session_to_json, session_to_markdown
 
 
 MESSAGES = [
@@ -26,6 +26,16 @@ def test_session_to_html_escapes_content():
     assert "Hello &lt;world&gt;" in output
     assert "<b>Welcome</b>" not in output
     assert "**Welcome**" in output
+
+
+def test_session_to_json_preserves_structure_and_unicode():
+    import json
+
+    output = session_to_json(MESSAGES, "My Chat")
+    payload = json.loads(output)
+    assert payload["title"] == "My Chat"
+    assert payload["messages"][0]["content"] == "Hello <world>"
+    assert payload["messages"][1]["role"] == "assistant"
 
 
 def test_select_session_matches_id_or_title_case_insensitively():
