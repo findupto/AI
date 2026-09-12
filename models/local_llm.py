@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from threading import Event
 
 
 class LocalLLM:
@@ -62,3 +63,23 @@ class LocalLLM:
             max_tokens=self.config["model"].get("max_tokens", 1024),
         )
         return result["choices"][0]["message"]["content"]
+
+    def stream(self, messages: list[dict], on_token, stop_event: Event | None = None) -> str:
+        if not self.ready:
+            text = self.error or "No local model is available."
+            on_token(text)
+            return text
+        parts = []
+        for chunk in self.model.create_chat_completion(
+            messages=messages,
+            temperature=self.config["model"].get("temperature", 0.7),
+            max_tokens=self.config["model"].get("max_tokens", 1024),
+            stream=True,
+        ):
+            if stop_event and stop_event.is_set():
+                break
+            token = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+            if token:
+                parts.append(token)
+                on_token(token)
+        return "".join(parts)
