@@ -81,8 +81,11 @@ class Window(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
         model_state = "Model ready" if self.o.llm.ready else f"Model not loaded — {self.o.llm.error or 'unknown error'}"
         self.status = QLabel("Local AI • " + model_state)
+        self.status.setObjectName("status")
         layout.addWidget(self.status)
 
         session_row = QHBoxLayout()
@@ -103,11 +106,14 @@ class Window(QMainWindow):
 
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
-        layout.addWidget(self.chat)
+        self.chat.setObjectName("chat")
+        self.chat.setAcceptRichText(True)
+        layout.addWidget(self.chat, 1)
 
         self.approval = QWidget()
+        self.approval.setObjectName("approval")
         approval_row = QHBoxLayout(self.approval)
-        approval_row.setContentsMargins(0, 0, 0, 0)
+        approval_row.setContentsMargins(10, 6, 10, 6)
         self.approval_label = QLabel()
         approval_row.addWidget(self.approval_label, 1)
         approve = QPushButton("Approve")
@@ -123,9 +129,11 @@ class Window(QMainWindow):
         self.input = QLineEdit()
         self.input.setPlaceholderText("Ask your local AI…")
         self.input.returnPressed.connect(self.send)
-        row.addWidget(self.input)
+        self.input.setObjectName("input")
+        row.addWidget(self.input, 1)
         send = QPushButton("Send")
         send.clicked.connect(self.send)
+        send.setObjectName("send")
         row.addWidget(send)
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.clicked.connect(self.stop_generation)
@@ -144,6 +152,25 @@ class Window(QMainWindow):
         docs_btn.clicked.connect(self.show_documents)
         row.addWidget(docs_btn)
         layout.addLayout(row)
+
+        self.setStyleSheet("""
+            QWidget { font-size: 14px; }
+            QMainWindow, QWidget { background: #111827; color: #e5e7eb; }
+            QLabel { color: #cbd5e1; }
+            QLabel#status { padding: 4px 2px; color: #93c5fd; font-weight: 600; }
+            QTextEdit#chat { background: #0b1220; border: 1px solid #243244; border-radius: 12px; padding: 12px; selection-background-color: #334155; }
+            QLineEdit#input { background: #0b1220; border: 1px solid #334155; border-radius: 10px; padding: 9px 12px; color: #f8fafc; }
+            QLineEdit#input:focus { border: 1px solid #60a5fa; }
+            QComboBox { background: #0b1220; border: 1px solid #334155; border-radius: 8px; padding: 7px 10px; color: #e5e7eb; }
+            QComboBox QAbstractItemView { background: #111827; color: #e5e7eb; selection-background-color: #1d4ed8; }
+            QPushButton { background: #1f2937; border: 1px solid #374151; border-radius: 8px; padding: 7px 11px; color: #e5e7eb; }
+            QPushButton:hover { background: #293548; }
+            QPushButton:pressed { background: #334155; }
+            QPushButton:disabled { color: #64748b; background: #172033; }
+            QPushButton#send { background: #2563eb; border-color: #2563eb; color: white; font-weight: 600; }
+            QPushButton#send:hover { background: #1d4ed8; }
+            QWidget#approval { background: #1e293b; border: 1px solid #475569; border-radius: 9px; }
+        """)
 
         self.refresh_sessions()
         if not self.o.llm.ready:
