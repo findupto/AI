@@ -6,47 +6,133 @@ from orchestrator.core import Orchestrator
 
 
 class Worker(QThread):
-    done = Signal(str)
-    def __init__(self, orchestrator, prompt):
-        super().__init__(); self.o = orchestrator; self.prompt = prompt
+    done = Signal(object)
+
+    def __init__(self, action, *args):
+        super().__init__()
+        self.action = action
+        self.args = args
+
     def run(self):
-        self.done.emit(self.o.agent_answer(self.prompt))
+        try:
+            self.done.emit({"ok": True, "value": self.action(*self.args)})
+        except Exception as exc:
+            self.done.emit({"ok": False, "value": str(exc)})
 
 
 class Window(QMainWindow):
     def __init__(self):
-        super().__init__(); self.setWindowTitle("Findupto AI — Standalone"); self.resize(1000, 720)
+        super().__init__()
+        self.setWindowTitle("Findupto AI — Standalone")
+        self.resize(1000, 720)
         self.o = Orchestrator()
-        root = QWidget(); self.setCentralWidget(root); layout = QVBoxLayout(root)
-        self.status = QLabel("Local AI • " + ("Model ready" if self.o.llm.ready else "Model not loaded")); layout.addWidget(self.status)
-        self.chat = QTextEdit(); self.chat.setReadOnly(True); layout.addWidget(self.chat)
-        row = QHBoxLayout(); self.input = QLineEdit(); self.input.setPlaceholderText("Ask your local AI…"); self.input.returnPressed.connect(self.send); row.addWidget(self.input)
-        send = QPushButton("Send"); send.clicked.connect(self.send); row.addWidget(send)
-        file_btn = QPushButton("Add document"); file_btn.clicked.connect(self.ingest); row.addWidget(file_btn)
+        self.pending_tool = None
+
+        root = QWidget()
+        self.setCentralWidget(root)
+        layout = QVBoxLayout(root)
+        self.status = QLabel("Local AI • " + ("Model ready" if self.o.llm.ready else "Model not loaded"))
+        layout.addWidget(self.status)
+        self.chat = QTextEdit()
+        self.chat.setReadOnly(True)
+        layout.addWidget(self.chat)
+
+        self.approval = QWidget()
+        approval_row = QHBoxLayout(self.approval)
+        approval_row.setContentsMargins(0, 0, 0, 0)
+        self.approval_label = QLabel()
+        approval_row.addWidget(self.approval_label, 1)
+        approve = QPushButton("Approve")
+        approve.clicked.connect(self.approve_tool)
+        approval_row.addWidget(approve)
+        reject = QPushButton("Reject")
+        reject.clicked.connect(self.reject_tool)
+        approval_row.addWidget(reject)
+        self.approval.hide()
+        layout.addWidget(self.approval)
+
+        row = QHBoxLayout()
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("Ask your local AI…")
+        self.input.returnPressed.connect(self.send)
+        row.addWidget(self.input)
+        send = QPushButton("Send")
+        send.clicked.connect(self.send)
+        row.addWidget(send)
+        file_btn = QPushButton("Add document")
+        file_btn.clicked.connect(self.ingest)
+        row.addWidget(file_btn)
         layout.addLayout(row)
+
         if not self.o.llm.ready:
             self.chat.append("Add a GGUF model at models/model.gguf (or set FINDUPTO_MODEL_PATH) and install: pip install -e .[local]")
 
+    def start_worker(self, action, *args):
+        self.worker = Worker(action, *args)
+        self.worker.done.connect(self.receive)
+        self.worker.start()
+
     def send(self):
         text = self.input.text().strip()
-        if not text or hasattr(self, "worker") and self.worker.isRunning(): return
-        self.chat.append(f"<b>You:</b> {text}"); self.input.clear(); self.status.setText("Thinking locally…")
-        self.worker = Worker(self.o, text); self.worker.done.connect(self.receive); self.worker.start()
+        if not text or (hasattr(self, "worker") and self.worker.isRunning()) or self.pending_tool:
+            return
+        self.chat.append(f"<b>You:</b> {text}")
+        self.input.clear()
+        self.status.setText("Thinking locally…")
+        self.start_worker(self.o.prepare_agent_request, text)
 
-    def receive(self, text):
-        self.chat.append(f"<b>Findupto AI:</b> {text}"); self.status.setText("Local AI")
+    def receive(self, result):
+        if not result["ok"]:
+            self.chat.append(f"<b>Error:</b> {result['value']}")
+            self.status.setText("Local AI • error")
+            return
+        value = result["value"]
+        if isinstance(value, dict) and value.get("kind") == "tool_request":
+            self.pending_tool = value
+            self.chat.append(f"<b>Findupto AI:</b> A tool is requesting approval.\n<pre>{value['tool']}\n{value['input']}</pre>")
+            self.approval_label.setText(f"Allow tool '{value['tool']}' to run?")
+            self.approval.show()
+            self.status.setText("Waiting for tool approval")
+            return
+        self.chat.append(f"<b>Findupto AI:</b> {value.get('text', value) if isinstance(value, dict) else value}")
+        self.status.setText("Local AI")
+
+    def approve_tool(self):
+        if not self.pending_tool:
+            return
+        p = self.pending_tool
+        self.approval.hide()
+        self.status.setText("Running approved tool locally…")
+        self.start_worker(self.o.approve_tool, p["user_text"], p["tool"], p["input"])
+        self.pending_tool = None
+
+    def reject_tool(self):
+        if not self.pending_tool:
+            return
+        p = self.pending_tool
+        self.approval.hide()
+        self.status.setText("Rejecting tool request…")
+        self.start_worker(self.o.reject_tool, p["user_text"], p["tool"], p["input"])
+        self.pending_tool = None
 
     def ingest(self):
         path, _ = QFileDialog.getOpenFileName(self, "Add local document", "", "Documents (*.txt *.md *.markdown *.json *.csv *.py *.pdf)")
-        if not path: return
+        if not path:
+            return
         try:
-            n = self.o.ingest(path); self.chat.append(f"<i>Indexed {Path(path).name} ({n} characters) with local provenance.</i>")
+            n = self.o.ingest(path)
+            self.chat.append(f"<i>Indexed {Path(path).name} ({n} characters) with local provenance.</i>")
         except Exception as exc:
             QMessageBox.warning(self, "Document ingestion failed", str(exc))
 
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("Findupto AI"); w = Window(); w.show(); sys.exit(app.exec())
+    app = QApplication(sys.argv)
+    app.setApplicationName("Findupto AI")
+    w = Window()
+    w.show()
+    sys.exit(app.exec())
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
