@@ -78,3 +78,16 @@ def test_memory_sessions_are_isolated(tmp_path):
     assert any(s["id"] == second and s["title"] == "Renamed" for s in store.list_sessions())
     assert store.delete_session(second) is True
     assert all(s["id"] != second for s in store.list_sessions())
+
+
+def test_memory_auto_title(tmp_path):
+    from memory.store import MemoryStore
+
+    store = MemoryStore(str(tmp_path / "memory.db"))
+    session_id = store.create_session()
+    store.auto_title(session_id, "  Explain local-first architecture for my app  ")
+    session = next(s for s in store.list_sessions() if s["id"] == session_id)
+    assert session["title"] == "Explain local-first architecture for my app"
+    store.auto_title(session_id, "A different first question")
+    session = next(s for s in store.list_sessions() if s["id"] == session_id)
+    assert session["title"] == "Explain local-first architecture for my app"
