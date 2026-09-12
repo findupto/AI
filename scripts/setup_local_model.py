@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 MODEL_REPO = "bartowski/Qwen_Qwen3-4B-GGUF"
 MODEL_FILE = "Qwen_Qwen3-4B-Q4_K_M.gguf"
 MODEL_URL = f"https://huggingface.co/{MODEL_REPO}/resolve/main/{MODEL_FILE}?download=true"
+DOWNLOAD_TIMEOUT = 600
+DOWNLOAD_RETRIES = 8
+CHUNK_SIZE = 4 * 1024 * 1024
 
 
 def model_path(base_dir: Path | None = None) -> Path:
@@ -23,48 +27,71 @@ def download_model(destination: Path) -> Path:
         return destination
 
     partial = destination.with_suffix(destination.suffix + ".part")
-    existing = partial.stat().st_size if partial.exists() else 0
-    headers = {"User-Agent": "Findupto-AI/0.1", "Accept": "application/octet-stream"}
-    if existing:
-        headers["Range"] = f"bytes={existing}-"
-
     print(f"Downloading {MODEL_REPO}:{MODEL_FILE}")
     print(f"Destination: {destination}")
     print("This model is about 2.5 GB; the first download may take a while.")
+    print("The download resumes automatically if the connection times out.")
 
-    request = Request(MODEL_URL, headers=headers)
-    try:
-        with urlopen(request, timeout=60) as response:
-            status = getattr(response, "status", 200)
-            if existing and status != 206:
-                existing = 0
-                partial.unlink(missing_ok=True)
-                request = Request(MODEL_URL, headers={"User-Agent": "Findupto-AI/0.1"})
-                response.close()
-                response = urlopen(request, timeout=60)
-            total = response.headers.get("Content-Length")
-            total_bytes = (int(total) + existing) if total else None
-            downloaded = existing
-            mode = "ab" if existing else "wb"
-            with partial.open(mode) as output:
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    output.write(chunk)
-                    downloaded += len(chunk)
-                    if total_bytes:
-                        percent = downloaded * 100 / total_bytes
-                        print(f"\r{percent:6.2f}%  {downloaded / (1024**3):.2f} / {total_bytes / (1024**3):.2f} GB", end="", flush=True)
-                    else:
-                        print(f"\r{downloaded / (1024**3):.2f} GB", end="", flush=True)
-        print()
-    except KeyboardInterrupt:
-        print("\nDownload interrupted. Run again to resume.")
-        return partial
-    except Exception as exc:
-        raise RuntimeError(f"Model download failed: {exc}") from exc
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        existing = partial.stat().st_size if partial.exists() else 0
+        headers = {"User-Agent": "Findupto-AI/0.1", "Accept": "application/octet-stream"}
+        if existing:
+            headers["Range"] = f"bytes={existing}-"
 
+        request = Request(MODEL_URL, headers=headers)
+        try:
+            with urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response:
+                status = getattr(response, "status", 200)
+                if existing and status != 206:
+                    existing = 0
+                    partial.unlink(missing_ok=True)
+                    request = Request(MODEL_URL, headers={"User-Agent": "Findupto-AI/0.1"})
+                    with urlopen(request, timeout=DOWNLOAD_TIMEOUT) as fresh:
+                        return _stream_response(fresh, partial, destination, 0)
+                return _stream_response(response, partial, destination, existing)
+        except KeyboardInterrupt:
+            print("\nDownload interrupted. Run again to resume.")
+            return partial
+        except Exception as exc:
+            if attempt >= DOWNLOAD_RETRIES:
+                raise RuntimeError(
+                    f"Model download failed after {DOWNLOAD_RETRIES} attempts: {exc}"
+                ) from exc
+            current = partial.stat().st_size if partial.exists() else 0
+            print(
+                f"\nDownload connection lost ({exc}). "
+                f"Retrying in 5 seconds from {current / (1024**3):.2f} GB..."
+            )
+            time.sleep(5)
+
+    raise RuntimeError("Model download failed")
+
+
+def _stream_response(response, partial: Path, destination: Path, existing: int) -> Path:
+    total = response.headers.get("Content-Length")
+    total_bytes = (int(total) + existing) if total else None
+    downloaded = existing
+    mode = "ab" if existing else "wb"
+
+    with partial.open(mode) as output:
+        while True:
+            chunk = response.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            output.write(chunk)
+            output.flush()
+            downloaded += len(chunk)
+            if total_bytes:
+                percent = downloaded * 100 / total_bytes
+                print(
+                    f"\r{percent:6.2f}%  "
+                    f"{downloaded / (1024**3):.2f} / {total_bytes / (1024**3):.2f} GB",
+                    end="",
+                    flush=True,
+                )
+            else:
+                print(f"\r{downloaded / (1024**3):.2f} GB", end="", flush=True)
+    print()
     partial.replace(destination)
     return destination
 
