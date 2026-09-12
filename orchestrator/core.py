@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from threading import Event
 
 from knowledge.ingest import read_document
 from knowledge.store import KnowledgeStore
@@ -71,6 +72,21 @@ class Orchestrator:
             final = self.agent.finalize_tool_result(user_text, request, ok, result)
             self.memory.add("assistant", final)
             return {"kind": "answer", "text": final}
+        return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input}
+
+    def prepare_agent_request_stream(self, user_text: str, on_token, stop_event: Event | None = None):
+        self.memory.add("user", user_text)
+        context_rows = self.knowledge.search(user_text, 4)
+        context = "\n\n".join(f"SOURCE: {r['source']}\n{r['text']}" for r in context_rows)
+        draft = self.agent.run_stream(user_text, context, on_token, stop_event)
+        if stop_event and stop_event.is_set():
+            if draft:
+                self.memory.add("assistant", draft)
+            return {"kind": "stopped", "text": draft}
+        request = self.agent.parse_call(draft)
+        if request is None:
+            self.memory.add("assistant", draft)
+            return {"kind": "answer", "text": draft}
         return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input}
 
     def approve_tool(self, user_text: str, tool_name: str, tool_input: str):
