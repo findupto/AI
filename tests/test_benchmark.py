@@ -16,6 +16,7 @@ def test_evaluate_cases_reports_missing_requirements():
     ])
     assert result["count"] == 2
     assert result["passed"] == 1
+    assert result["failed"] == 1
     assert result["pass_rate"] == 0.5
     assert result["results"][1]["missing"] == ["beta"]
 
@@ -39,3 +40,4 @@ def test_benchmark_cli(tmp_path, monkeypatch, capsys):
     main()
     output = json.loads(capsys.readouterr().out)
     assert output["passed"] == 1
+    assert output["failed"] == 0
