@@ -1,4 +1,5 @@
 from html import escape
+import json
 
 
 def session_to_markdown(messages, title="Conversation"):
@@ -34,3 +35,19 @@ def session_to_html(messages, title="Conversation"):
         blocks.append(f'<section class="message"><div class="meta">{escape(meta)}</div><pre>{content}</pre></section>')
     blocks.append("</body></html>")
     return "\n".join(blocks)
+
+
+def session_to_json(messages, title="Conversation"):
+    """Render a session as structured, machine-readable JSON."""
+    payload = {
+        "title": title.strip() or "Conversation",
+        "messages": [
+            {
+                "role": message.get("role", ""),
+                "content": str(message.get("content", "")),
+                **({"created_at": message["created_at"]} if message.get("created_at") else {}),
+            }
+            for message in messages
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
