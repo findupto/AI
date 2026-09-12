@@ -68,10 +68,11 @@ findupto-quality responses.txt --min-length 20
 Run structured benchmark cases from JSON:
 
 ```bash
-python -m evaluation.benchmark cases.json
+findupto-benchmark cases.json
+findupto-benchmark cases.json --fail-on-error
 ```
 
-Each benchmark case can contain `id`, `response`, and a `required` list of phrases that must appear in the response.
+Each benchmark case supports `id`, `response`, `required`, `forbidden`, and `min_length`. Required phrases must appear, forbidden phrases must not appear, and `min_length` enforces a minimum non-whitespace response length. Use `--fail-on-error` in CI or scripts when a failing case should produce exit status 1.
 
 ## Project structure
 ```text
