@@ -5,59 +5,62 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QTextCursor
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox, QComboBox, QInputDialog
+from PySide6.QtGui import QTextCursor, QKeySequence, QShortcut
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox, QComboBox, QInputDialog
 from orchestrator.core import Orchestrator
 
 class Worker(QThread):
-    done = Signal(object)
-    def __init__(self, action, *args): super().__init__(); self.action=action; self.args=args
+    done=Signal(object)
+    def __init__(self,action,*args): super().__init__(); self.action=action; self.args=args
     def run(self):
-        try: self.done.emit({"ok":True,"value":self.action(*self.args)})
-        except Exception as exc: self.done.emit({"ok":False,"value":str(exc)})
+        try:self.done.emit({"ok":True,"value":self.action(*self.args)})
+        except Exception as exc:self.done.emit({"ok":False,"value":str(exc)})
 
 class StreamWorker(QThread):
     token=Signal(str); done=Signal(object)
-    def __init__(self, action,*args): super().__init__(); self.action=action; self.args=args; self.stop_event=Event()
-    def stop(self): self.stop_event.set()
+    def __init__(self,action,*args): super().__init__(); self.action=action; self.args=args; self.stop_event=Event()
+    def stop(self):self.stop_event.set()
     def run(self):
-        try: self.done.emit({"ok":True,"value":self.action(*self.args,self.token.emit,self.stop_event)})
-        except Exception as exc: self.done.emit({"ok":False,"value":str(exc)})
+        try:self.done.emit({"ok":True,"value":self.action(*self.args,self.token.emit,self.stop_event)})
+        except Exception as exc:self.done.emit({"ok":False,"value":str(exc)})
 
 class DocumentDialog(QDialog):
     def __init__(self,documents,parent=None):
         super().__init__(parent); self.setWindowTitle("Local knowledge"); self.resize(700,400); layout=QVBoxLayout(self); self.list=QListWidget()
-        for d in documents: self.list.addItem(f"{d['source']}  •  {d['characters']} chars  •  {d['created_at']}")
+        for d in documents:self.list.addItem(f"{d['source']}  •  {d['characters']} chars  •  {d['created_at']}")
         layout.addWidget(self.list); row=QHBoxLayout(); delete=QPushButton("Remove selected"); delete.clicked.connect(self.accept); row.addWidget(delete); close=QDialogButtonBox(QDialogButtonBox.Close); close.rejected.connect(self.reject); row.addWidget(close); layout.addLayout(row)
 
 class Window(QMainWindow):
     def __init__(self):
         super().__init__(); self.setWindowTitle("Findupto AI — Standalone"); self.resize(1000,720); self.o=Orchestrator(); self.pending_tool=None; self.worker=None; self._last_ingest_path=""; self._stream_text=""; self._stream_start=None; self._last_response=""; self._message_counter=0; self._messages={}
         root=QWidget(); self.setCentralWidget(root); layout=QVBoxLayout(root); model_state="Model ready" if self.o.llm.ready else f"Model not loaded — {self.o.llm.error or 'unknown error'}"; self.status=QLabel("Local AI • "+model_state); layout.addWidget(self.status)
-        session_row=QHBoxLayout(); session_row.addWidget(QLabel("Chat:")); self.sessions=QComboBox(); self.sessions.currentIndexChanged.connect(self.switch_session); session_row.addWidget(self.sessions,1)
-        for text,slot in (("New",self.new_session),("Rename",self.rename_session),("Delete",self.delete_session)): b=QPushButton(text); b.clicked.connect(slot); session_row.addWidget(b)
+        session_row=QHBoxLayout(); session_row.addWidget(QLabel("Chats")); self.sessions=QComboBox(); self.sessions.currentIndexChanged.connect(self.switch_session); session_row.addWidget(self.sessions,1)
+        for text,slot in (("＋ New",self.new_session),("Rename",self.rename_session),("Delete",self.delete_session)): b=QPushButton(text); b.clicked.connect(slot); session_row.addWidget(b)
         layout.addLayout(session_row)
-        search_row=QHBoxLayout(); self.search_input=QLineEdit(); self.search_input.setPlaceholderText("Search this conversation…"); self.search_input.returnPressed.connect(self.search_messages); search_row.addWidget(self.search_input,1); search_btn=QPushButton("Search"); search_btn.clicked.connect(self.search_messages); search_row.addWidget(search_btn); clear_search=QPushButton("Clear"); clear_search.clicked.connect(self.clear_search); search_row.addWidget(clear_search); layout.addLayout(search_row)
-        self.chat=QTextEdit(); self.chat.setReadOnly(True); self.chat.setStyleSheet("QTextEdit { border: 0; padding: 12px; }"); layout.addWidget(self.chat)
+        search_row=QHBoxLayout(); self.search_input=QLineEdit(); self.search_input.setPlaceholderText("Search this conversation…  (Ctrl+F)"); self.search_input.returnPressed.connect(self.search_messages); search_row.addWidget(self.search_input,1); search_btn=QPushButton("Search"); search_btn.clicked.connect(self.search_messages); search_row.addWidget(search_btn); clear_search=QPushButton("Clear"); clear_search.clicked.connect(self.clear_search); search_row.addWidget(clear_search); layout.addLayout(search_row)
+        self.chat=QTextBrowser(); self.chat.setReadOnly(True); self.chat.setOpenLinks(False); self.chat.setOpenExternalLinks(False); self.chat.anchorClicked.connect(self.anchor_clicked); self.chat.setStyleSheet("QTextBrowser { border: 0; padding: 12px; }"); layout.addWidget(self.chat)
         self.approval=QWidget(); approval_row=QHBoxLayout(self.approval); approval_row.setContentsMargins(0,0,0,0); self.approval_label=QLabel(); approval_row.addWidget(self.approval_label,1)
         for text,slot in (("Approve",self.approve_tool),("Reject",self.reject_tool)): b=QPushButton(text); b.clicked.connect(slot); approval_row.addWidget(b)
         self.approval.hide(); layout.addWidget(self.approval)
-        row=QHBoxLayout(); self.input=QLineEdit(); self.input.setPlaceholderText("Ask your local AI…"); self.input.returnPressed.connect(self.send); row.addWidget(self.input)
+        row=QHBoxLayout(); self.input=QLineEdit(); self.input.setPlaceholderText("Ask your local AI…  (Ctrl+Enter to send)"); self.input.returnPressed.connect(self.send); row.addWidget(self.input)
         for text,slot in (("Send",self.send),("Stop",self.stop_generation),("Copy last",self.copy_last_response),("Choose model",self.choose_model),("Add document",self.ingest),("Knowledge",self.show_documents)):
             b=QPushButton(text); b.clicked.connect(slot); b.setEnabled(text!="Stop");
-            if text=="Stop": self.stop_btn=b
+            if text=="Stop":self.stop_btn=b
             row.addWidget(b)
-        layout.addLayout(row); self.refresh_sessions()
-        if not self.o.llm.ready: self.chat.append("<b>Model setup:</b> Choose a compatible GGUF model, or add one at models/model.gguf / set FINDUPTO_MODEL_PATH. Install the local extra with <code>pip install -e .[local]</code>.")
+        layout.addLayout(row); self.install_shortcuts(); self.refresh_sessions()
+        if not self.o.llm.ready:self.chat.append("<b>Model setup:</b> Choose a compatible GGUF model, or add one at models/model.gguf / set FINDUPTO_MODEL_PATH. Install the local extra with <code>pip install -e .[local]</code>.")
 
-    def start_worker(self,action,callback,*args): self.worker=Worker(action,*args); self.worker.done.connect(callback); self.worker.start()
+    def install_shortcuts(self):
+        for key,slot in (("Ctrl+N",self.new_session),("Ctrl+F",lambda:self.search_input.setFocus()),("Ctrl+L",lambda:self.input.setFocus()),("Ctrl+Enter",self.send),("Escape",self.stop_generation),("Ctrl+Shift+C",self.copy_last_response)):
+            QShortcut(QKeySequence(key),self).activated.connect(slot)
+
+    def start_worker(self,action,callback,*args):self.worker=Worker(action,*args);self.worker.done.connect(callback);self.worker.start()
     def refresh_sessions(self):
         sessions=self.o.list_sessions(); current=self.o.session_id; self.sessions.blockSignals(True); self.sessions.clear()
-        for s in sessions: self.sessions.addItem(s["title"],s["id"])
+        for s in sessions:self.sessions.addItem(s["title"],s["id"])
         index=self.sessions.findData(current)
-        if index>=0: self.sessions.setCurrentIndex(index)
+        if index>=0:self.sessions.setCurrentIndex(index)
         self.sessions.blockSignals(False); self.load_session_view()
-
     def render_markdown(self,content):
         safe=html.escape(content); code_blocks=[]
         def replace_code(m):
@@ -67,58 +70,49 @@ class Window(QMainWindow):
         for line in safe.splitlines():
             stripped=line.strip(); heading=re.match(r"^(#{1,3})\s+(.+)$",stripped); unordered=re.match(r"^[-*]\s+(.+)$",stripped); ordered=re.match(r"^\d+[.)]\s+(.+)$",stripped)
             if heading:
-                if in_list: rendered.append(f"</{list_type}>"); in_list=False
+                if in_list:rendered.append(f"</{list_type}>");in_list=False
                 rendered.append(f"<h{len(heading.group(1))}>{heading.group(2)}</h{len(heading.group(1))}>")
             elif unordered or ordered:
                 wanted="ul" if unordered else "ol"; item=(unordered or ordered).group(1)
-                if not in_list: rendered.append(f"<{wanted}>"); in_list=True; list_type=wanted
-                elif list_type!=wanted: rendered.append(f"</{list_type}><{wanted}>"); list_type=wanted
+                if not in_list:rendered.append(f"<{wanted}>");in_list=True;list_type=wanted
+                elif list_type!=wanted:rendered.append(f"</{list_type}><{wanted}>");list_type=wanted
                 rendered.append(f"<li>{item}</li>")
             else:
-                if in_list: rendered.append(f"</{list_type}>"); in_list=False; list_type=None
-                if stripped: rendered.append(f"<p>{line}</p>")
-        if in_list: rendered.append(f"</{list_type}>")
+                if in_list:rendered.append(f"</{list_type}>");in_list=False;list_type=None
+                if stripped:rendered.append(f"<p>{line}</p>")
+        if in_list:rendered.append(f"</{list_type}>")
         result="".join(rendered) if rendered else "<p></p>"
-        for i,block in enumerate(code_blocks): result=result.replace(f"@@CODE{i}@@",block)
+        for i,block in enumerate(code_blocks):result=result.replace(f"@@CODE{i}@@",block)
         return result
-
     def render_message(self,role,content,timestamp=None,mid=None,highlight=""):
-        self._message_counter+=1; mid=mid or f"m{self._message_counter}"; self._messages[mid]=content
-        label="You" if role=="user" else "Findupto AI"; stamp=timestamp or datetime.now().strftime("%H:%M"); body=html.escape(content).replace("\n","<br>") if role=="user" else self.render_markdown(content)
-        if highlight: body=re.sub(re.escape(html.escape(highlight)),lambda m:f'<span style="background:#facc15;color:#111827">{m.group(0)}</span>',body,flags=re.IGNORECASE)
-        button=f'<a href="copy:{html.escape(mid)}">Copy</a>'
-        bubble_class="user-bubble" if role=="user" else "ai-bubble"; bubble=f'<div class="{bubble_class}" style="margin:8px 4px;padding:10px 14px;border-radius:12px;"><div><b>{label}</b> <small>{html.escape(str(stamp))}</small> <small>•</small> {button}</div><div style="margin-top:5px;">{body}</div></div>'
-        self.chat.append(bubble)
-
+        self._message_counter+=1; mid=mid or f"m{self._message_counter}"; self._messages[mid]=content; label="You" if role=="user" else "Findupto AI"; stamp=timestamp or datetime.now().strftime("%H:%M"); body=html.escape(content).replace("\n","<br>") if role=="user" else self.render_markdown(content)
+        if highlight:body=re.sub(re.escape(html.escape(highlight)),lambda m:f'<span style="background:#facc15;color:#111827">{m.group(0)}</span>',body,flags=re.IGNORECASE)
+        button=f'<a href="copy:{html.escape(mid)}">Copy</a>'; bubble_class="user-bubble" if role=="user" else "ai-bubble"; bubble=f'<div class="{bubble_class}" style="margin:8px 4px;padding:10px 14px;border-radius:12px;"><div><b>{label}</b> <small>{html.escape(str(stamp))}</small> <small>•</small> {button}</div><div style="margin-top:5px;">{body}</div></div>'; self.chat.append(bubble)
     def load_session_view(self,highlight=""):
-        self.chat.clear(); self._last_response=""; self._messages.clear(); self._message_counter=0
-        for message in self.o.session_messages():
-            self.render_message(message["role"],message["content"],message.get("created_at"),highlight=highlight)
-            if message["role"]=="assistant": self._last_response=message["content"]
-
+        self.chat.clear();self._last_response="";self._messages.clear();self._message_counter=0
+        for message in self.o.session_messages():self.render_message(message["role"],message["content"],message.get("created_at"),highlight=highlight);self._last_response=message["content"] if message["role"]=="assistant" else self._last_response
     def search_messages(self):
         term=self.search_input.text().strip()
-        if not term: self.load_session_view(); return
-        messages=[m for m in self.o.session_messages() if term.casefold() in m["content"].casefold()]
-        self.chat.clear(); self._messages.clear(); self._message_counter=0
-        if not messages: self.chat.append(f'<i>No messages found for “{html.escape(term)}”.</i>'); return
-        for message in messages: self.render_message(message["role"],message["content"],message.get("created_at"),highlight=term)
+        if not term:self.load_session_view();return
+        messages=[m for m in self.o.session_messages() if term.casefold() in m["content"].casefold()];self.chat.clear();self._messages.clear();self._message_counter=0
+        if not messages:self.chat.append(f'<i>No messages found for “{html.escape(term)}”.</i>');return
+        for message in messages:self.render_message(message["role"],message["content"],message.get("created_at"),highlight=term)
         self.status.setText(f"Found {len(messages)} matching message(s)")
-
-    def clear_search(self): self.search_input.clear(); self.load_session_view(); self.status.setText("Local AI")
+    def clear_search(self):self.search_input.clear();self.load_session_view();self.status.setText("Local AI")
     def copy_message(self,mid):
         content=self._messages.get(mid)
-        if content: QApplication.clipboard().setText(content); self.status.setText("Message copied")
-
-    def load_session_view_noop(self): pass
+        if content is not None:QApplication.clipboard().setText(content);self.status.setText("Message copied")
+    def anchor_clicked(self,url):
+        target=url.toString()
+        if target.startswith("copy:"):self.copy_message(target[5:])
     def switch_session(self,index):
-        if index<0 or (self.worker and self.worker.isRunning()) or self.pending_tool: return
+        if index<0 or (self.worker and self.worker.isRunning()) or self.pending_tool:return
         session_id=self.sessions.itemData(index)
-        if session_id and self.o.switch_session(session_id): self.load_session_view(); self.status.setText("Local AI")
+        if session_id and self.o.switch_session(session_id):self.load_session_view();self.status.setText("Local AI")
     def new_session(self):
         if self.worker and self.worker.isRunning() or self.pending_tool:return
         title,ok=QInputDialog.getText(self,"New chat","Chat name:")
-        if ok:self.o.new_session(title or "New chat");self.refresh_sessions()
+        if ok:self.o.new_session(title or "New chat");self.refresh_sessions();self.input.setFocus()
     def rename_session(self):
         if self.worker and self.worker.isRunning() or self.pending_tool:return
         title,ok=QInputDialog.getText(self,"Rename chat","Chat name:",text=self.sessions.currentText())
@@ -188,10 +182,6 @@ class Window(QMainWindow):
         if isinstance(self.worker,StreamWorker) and self.worker.isRunning():self.worker.stop()
         if self.worker and self.worker.isRunning():self.worker.quit();self.worker.wait(2000)
         self.o.memory.close();self.o.knowledge.close();event.accept()
-    def eventFilter(self,obj,event): return super().eventFilter(obj,event)
-    def anchor_clicked(self,url):
-        if url.startswith("copy:"): self.copy_message(url[5:]); return
-
 
 def main():
     app=QApplication(sys.argv);app.setApplicationName("Findupto AI");w=Window();w.show();sys.exit(app.exec())
