@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 from knowledge.ingest import read_document
@@ -12,12 +13,13 @@ SYSTEM = """You are Findupto AI, a local-first standalone assistant. Be accurate
 
 
 class Orchestrator:
-    def __init__(self, config_path="config/default.json"):
-        config_file = Path(config_path).expanduser()
+    def __init__(self, config_path=None):
+        project_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
+        config_file = Path(config_path).expanduser() if config_path else project_root / "config" / "default.json"
         if not config_file.is_absolute():
-            config_file = Path.cwd() / config_file
+            config_file = project_root / config_file
         config_file = config_file.resolve()
-        self.base_dir = config_file.parent.parent
+        self.base_dir = project_root
         config = json.loads(config_file.read_text(encoding="utf-8"))
         self.config = config
         self.policy = Policy(config)
