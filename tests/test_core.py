@@ -33,6 +33,19 @@ def test_knowledge_search_handles_natural_language(tmp_path):
     assert rows and rows[0]["source"] == "local:test"
 
 
+def test_knowledge_document_management(tmp_path):
+    from knowledge.store import KnowledgeStore
+
+    k = KnowledgeStore(str(tmp_path / "knowledge.db"))
+    k.ingest("local:one", "first document")
+    k.ingest("local:two", "second document")
+    assert {row["source"] for row in k.documents()} == {"local:one", "local:two"}
+    assert k.delete("local:one") is True
+    assert [row["source"] for row in k.documents()] == ["local:two"]
+    assert k.search("first document") == []
+    assert k.delete("local:missing") is False
+
+
 def test_memory_store_is_thread_safe(tmp_path):
     from memory.store import MemoryStore
     import threading
