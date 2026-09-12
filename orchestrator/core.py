@@ -6,6 +6,7 @@ from knowledge.ingest import read_document
 from knowledge.store import KnowledgeStore
 from memory.store import MemoryStore
 from models.local_llm import LocalLLM
+from orchestrator.agent import Agent, Tool
 from security.policy import Policy
 from tools.python_tool import run_python
 
@@ -25,11 +26,9 @@ class Orchestrator:
         self.policy = Policy(config)
         self.llm = LocalLLM(config, base_dir=self.base_dir)
         self.memory = MemoryStore(self._data_path(config["memory"]["database"]))
-        self.knowledge = KnowledgeStore(
-            self._data_path(config["knowledge"]["database"]),
-            config["knowledge"]["chunk_size"],
-            config["knowledge"]["chunk_overlap"],
-        )
+        self.knowledge = KnowledgeStore(self._data_path(config["knowledge"]["database"]), config["knowledge"]["chunk_size"], config["knowledge"]["chunk_overlap"])
+        self.agent = Agent(self.llm, self.policy)
+        self.agent.register(Tool("python", "Run bounded Python for calculations and local text processing", self.execute_python, requires_confirmation=True))
 
     def _data_path(self, value: str) -> str:
         path = Path(value).expanduser()
@@ -57,3 +56,16 @@ class Orchestrator:
         if self.policy.tool_confirmation_required():
             return False, "Python tool requires explicit user confirmation in the desktop UI."
         return run_python(code, self.policy.python_timeout())
+
+    def agent_answer(self, user_text: str) -> str:
+        context_rows = self.knowledge.search(user_text, 4)
+        context = "\n\n".join(f"SOURCE: {r['source']}\n{r['text']}" for r in context_rows)
+        draft = self.agent.run(user_text, context)
+        call = self.agent.parse_call(draft)
+        if call is None:
+            return draft
+        tool, tool_input = call
+        if tool.requires_confirmation:
+            return f"Tool confirmation required: {tool.name}\nINPUT: {tool_input}\n\nThe requested tool has not been executed."
+        ok, result = tool.handler(tool_input)
+        return result if ok else f"Tool error: {result}"
