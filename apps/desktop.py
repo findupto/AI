@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from threading import Event
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox
 from orchestrator.core import Orchestrator
 
 
@@ -40,6 +40,26 @@ class StreamWorker(QThread):
             self.done.emit({"ok": True, "value": result})
         except Exception as exc:
             self.done.emit({"ok": False, "value": str(exc)})
+
+
+class DocumentDialog(QDialog):
+    def __init__(self, documents, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Local knowledge")
+        self.resize(700, 400)
+        layout = QVBoxLayout(self)
+        self.list = QListWidget()
+        for document in documents:
+            self.list.addItem(f"{document['source']}  •  {document['characters']} chars  •  {document['created_at']}")
+        layout.addWidget(self.list)
+        row = QHBoxLayout()
+        delete = QPushButton("Remove selected")
+        delete.clicked.connect(self.accept)
+        row.addWidget(delete)
+        close = QDialogButtonBox(QDialogButtonBox.Close)
+        close.rejected.connect(self.reject)
+        row.addWidget(close)
+        layout.addLayout(row)
 
 
 class Window(QMainWindow):
@@ -95,6 +115,9 @@ class Window(QMainWindow):
         file_btn = QPushButton("Add document")
         file_btn.clicked.connect(self.ingest)
         row.addWidget(file_btn)
+        docs_btn = QPushButton("Knowledge")
+        docs_btn.clicked.connect(self.show_documents)
+        row.addWidget(docs_btn)
         layout.addLayout(row)
 
         if not self.o.llm.ready:
@@ -112,7 +135,7 @@ class Window(QMainWindow):
         self.chat.append(f"<b>You:</b> {text}")
         self.input.clear()
         self._stream_text = ""
-        self.chat.append("<b>Findupto AI:</b> <span id='stream'>▌</span>")
+        self.chat.append("<b>Findupto AI:</b> ")
         self.status.setText("Generating locally…")
         self.stop_btn.setEnabled(True)
         self.worker = StreamWorker(self.o.prepare_agent_request_stream, text)
@@ -149,22 +172,6 @@ class Window(QMainWindow):
         if value.get("kind") == "stopped":
             self.status.setText("Generation stopped")
             return
-        self.status.setText("Local AI")
-
-    def receive(self, result):
-        if not result["ok"]:
-            self.chat.append(f"<b>Error:</b> {result['value']}")
-            self.status.setText("Local AI • error")
-            return
-        value = result["value"]
-        if isinstance(value, dict) and value.get("kind") == "tool_request":
-            self.pending_tool = value
-            self.chat.append(f"<b>Findupto AI:</b> A tool is requesting approval.\n<pre>{value['tool']}\n{value['input']}</pre>")
-            self.approval_label.setText(f"Allow tool '{value['tool']}' to run?")
-            self.approval.show()
-            self.status.setText("Waiting for tool approval")
-            return
-        self.chat.append(f"<b>Findupto AI:</b> {value.get('text', value) if isinstance(value, dict) else value}")
         self.status.setText("Local AI")
 
     def choose_model(self):
@@ -229,6 +236,20 @@ class Window(QMainWindow):
             return
         self.chat.append(f"<i>Indexed {Path(self._last_ingest_path).name} ({result['value']} characters) with local provenance.</i>")
         self.status.setText("Local AI")
+
+    def show_documents(self):
+        if self.worker and self.worker.isRunning() or self.pending_tool:
+            return
+        documents = self.o.list_documents()
+        if not documents:
+            QMessageBox.information(self, "Knowledge", "No local documents are indexed yet.")
+            return
+        dialog = DocumentDialog(documents, self)
+        if dialog.exec() == QDialog.Accepted and dialog.list.currentRow() >= 0:
+            source = documents[dialog.list.currentRow()]["source"]
+            if QMessageBox.question(self, "Remove document", f"Remove this document from local knowledge?\n\n{source}") == QMessageBox.Yes:
+                if self.o.delete_document(source):
+                    self.chat.append(f"<i>Removed from local knowledge: {Path(source).name}</i>")
 
     def closeEvent(self, event):
         if isinstance(self.worker, StreamWorker) and self.worker.isRunning():
