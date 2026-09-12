@@ -4,9 +4,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from threading import Event
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QTextCursor, QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox, QComboBox, QInputDialog
+from PySide6.QtCore import QThread, Signal, QSettings
+from PySide6.QtGui import QTextCursor, QKeySequence, QShortcut, QFont
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox, QComboBox, QInputDialog, QCheckBox, QSpinBox, QFormLayout
 from orchestrator.core import Orchestrator
 
 class Worker(QThread):
@@ -30,30 +30,56 @@ class DocumentDialog(QDialog):
         for d in documents:self.list.addItem(f"{d['source']}  •  {d['characters']} chars  •  {d['created_at']}")
         layout.addWidget(self.list); row=QHBoxLayout(); delete=QPushButton("Remove selected"); delete.clicked.connect(self.accept); row.addWidget(delete); close=QDialogButtonBox(QDialogButtonBox.Close); close.rejected.connect(self.reject); row.addWidget(close); layout.addLayout(row)
 
+class SettingsDialog(QDialog):
+    def __init__(self,settings,parent=None):
+        super().__init__(parent); self.setWindowTitle("Settings"); self.setMinimumWidth(420); self.settings=settings
+        layout=QVBoxLayout(self); form=QFormLayout()
+        self.theme=QComboBox(); self.theme.addItems(["Dark","System"]); self.theme.setCurrentText(settings.value("ui/theme","Dark")); form.addRow("Appearance",self.theme)
+        self.timestamps=QCheckBox("Show message timestamps"); self.timestamps.setChecked(settings.value("ui/show_timestamps",True,type=bool)); form.addRow("Chat",self.timestamps)
+        self.font_size=QSpinBox(); self.font_size.setRange(10,22); self.font_size.setValue(settings.value("ui/font_size",11,type=int)); form.addRow("Font size",self.font_size)
+        self.restore_geometry=QCheckBox("Remember window size and position"); self.restore_geometry.setChecked(settings.value("ui/restore_geometry",True,type=bool)); form.addRow("Window",self.restore_geometry)
+        layout.addLayout(form); buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel); buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject); layout.addWidget(buttons)
+    def values(self):return {"theme":self.theme.currentText(),"show_timestamps":self.timestamps.isChecked(),"font_size":self.font_size.value(),"restore_geometry":self.restore_geometry.isChecked()}
+
 class Window(QMainWindow):
     def __init__(self):
-        super().__init__(); self.setWindowTitle("Findupto AI — Standalone"); self.resize(1000,720); self.o=Orchestrator(); self.pending_tool=None; self.worker=None; self._last_ingest_path=""; self._stream_text=""; self._stream_start=None; self._last_response=""; self._message_counter=0; self._messages={}
-        root=QWidget(); self.setCentralWidget(root); layout=QVBoxLayout(root); model_state="Model ready" if self.o.llm.ready else f"Model not loaded — {self.o.llm.error or 'unknown error'}"; self.status=QLabel("Local AI • "+model_state); layout.addWidget(self.status)
+        super().__init__(); self.setWindowTitle("Findupto AI — Standalone"); self.settings=QSettings("Findupto","AI"); self.pending_tool=None; self.worker=None; self._last_ingest_path=""; self._stream_text=""; self._stream_start=None; self._last_response=""; self._message_counter=0; self._messages={}; self.apply_preferences(False)
+        if self.settings.value("ui/restore_geometry",True,type=bool) and self.settings.value("window/geometry",b""): self.restoreGeometry(self.settings.value("window/geometry"))
+        else:self.resize(1000,720)
+        self.o=Orchestrator(); root=QWidget(); self.setCentralWidget(root); layout=QVBoxLayout(root); model_state="Model ready" if self.o.llm.ready else f"Model not loaded — {self.o.llm.error or 'unknown error'}"; self.status=QLabel("Local AI • "+model_state); layout.addWidget(self.status)
         session_row=QHBoxLayout(); session_row.addWidget(QLabel("Chats")); self.sessions=QComboBox(); self.sessions.currentIndexChanged.connect(self.switch_session); session_row.addWidget(self.sessions,1)
         for text,slot in (("＋ New",self.new_session),("Rename",self.rename_session),("Delete",self.delete_session)): b=QPushButton(text); b.clicked.connect(slot); session_row.addWidget(b)
         layout.addLayout(session_row)
         search_row=QHBoxLayout(); self.search_input=QLineEdit(); self.search_input.setPlaceholderText("Search this conversation…  (Ctrl+F)"); self.search_input.returnPressed.connect(self.search_messages); search_row.addWidget(self.search_input,1); search_btn=QPushButton("Search"); search_btn.clicked.connect(self.search_messages); search_row.addWidget(search_btn); clear_search=QPushButton("Clear"); clear_search.clicked.connect(self.clear_search); search_row.addWidget(clear_search); layout.addLayout(search_row)
-        self.chat=QTextBrowser(); self.chat.setReadOnly(True); self.chat.setOpenLinks(False); self.chat.setOpenExternalLinks(False); self.chat.anchorClicked.connect(self.anchor_clicked); self.chat.setStyleSheet("QTextBrowser { border: 0; padding: 12px; }"); layout.addWidget(self.chat)
+        self.chat=QTextBrowser(); self.chat.setReadOnly(True); self.chat.setOpenLinks(False); self.chat.setOpenExternalLinks(False); self.chat.anchorClicked.connect(self.anchor_clicked); layout.addWidget(self.chat)
         self.approval=QWidget(); approval_row=QHBoxLayout(self.approval); approval_row.setContentsMargins(0,0,0,0); self.approval_label=QLabel(); approval_row.addWidget(self.approval_label,1)
         for text,slot in (("Approve",self.approve_tool),("Reject",self.reject_tool)): b=QPushButton(text); b.clicked.connect(slot); approval_row.addWidget(b)
         self.approval.hide(); layout.addWidget(self.approval)
         row=QHBoxLayout(); self.input=QLineEdit(); self.input.setPlaceholderText("Ask your local AI…  (Ctrl+Enter to send)"); self.input.returnPressed.connect(self.send); row.addWidget(self.input)
-        for text,slot in (("Send",self.send),("Stop",self.stop_generation),("Copy last",self.copy_last_response),("Choose model",self.choose_model),("Add document",self.ingest),("Knowledge",self.show_documents)):
+        for text,slot in (("Send",self.send),("Stop",self.stop_generation),("Copy last",self.copy_last_response),("Choose model",self.choose_model),("Add document",self.ingest),("Knowledge",self.show_documents),("Settings",self.open_settings)):
             b=QPushButton(text); b.clicked.connect(slot); b.setEnabled(text!="Stop");
             if text=="Stop":self.stop_btn=b
             row.addWidget(b)
-        layout.addLayout(row); self.install_shortcuts(); self.refresh_sessions()
+        layout.addLayout(row); self.install_shortcuts(); self.refresh_sessions(); self.apply_preferences(True)
         if not self.o.llm.ready:self.chat.append("<b>Model setup:</b> Choose a compatible GGUF model, or add one at models/model.gguf / set FINDUPTO_MODEL_PATH. Install the local extra with <code>pip install -e .[local]</code>.")
 
+    def dark_stylesheet(self):
+        return """QWidget{background:#111827;color:#e5e7eb;} QLabel{color:#cbd5e1;} QTextBrowser{background:#0b1220;border:1px solid #263244;border-radius:12px;padding:12px;} QLineEdit,QComboBox,QSpinBox{background:#0f172a;color:#f8fafc;border:1px solid #334155;border-radius:8px;padding:7px;} QLineEdit:focus,QComboBox:focus,QSpinBox:focus{border:1px solid #60a5fa;} QPushButton{background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;padding:7px 11px;} QPushButton:hover{background:#374151;} QPushButton:pressed{background:#4b5563;} QPushButton:disabled{color:#6b7280;} QDialog{background:#111827;} QCheckBox{color:#e5e7eb;}"""
+    def apply_preferences(self,initial=False):
+        theme=self.settings.value("ui/theme","Dark"); app=QApplication.instance()
+        if theme=="Dark":app.setStyleSheet(self.dark_stylesheet())
+        else:app.setStyleSheet("")
+        size=self.settings.value("ui/font_size",11,type=int); font=app.font(); font.setPointSize(size); app.setFont(font)
+        self._show_timestamps=self.settings.value("ui/show_timestamps",True,type=bool)
+        if not initial and hasattr(self,"chat"):self.load_session_view()
+    def open_settings(self):
+        if self.worker and self.worker.isRunning() or self.pending_tool:return
+        dialog=SettingsDialog(self.settings,self)
+        if dialog.exec()!=QDialog.Accepted:return
+        values=dialog.values(); self.settings.setValue("ui/theme",values["theme"]); self.settings.setValue("ui/show_timestamps",values["show_timestamps"]); self.settings.setValue("ui/font_size",values["font_size"]); self.settings.setValue("ui/restore_geometry",values["restore_geometry"]); self.apply_preferences(); self.status.setText("Settings saved")
     def install_shortcuts(self):
         for key,slot in (("Ctrl+N",self.new_session),("Ctrl+F",lambda:self.search_input.setFocus()),("Ctrl+L",lambda:self.input.setFocus()),("Ctrl+Enter",self.send),("Escape",self.stop_generation),("Ctrl+Shift+C",self.copy_last_response)):
             QShortcut(QKeySequence(key),self).activated.connect(slot)
-
     def start_worker(self,action,callback,*args):self.worker=Worker(action,*args);self.worker.done.connect(callback);self.worker.start()
     def refresh_sessions(self):
         sessions=self.o.list_sessions(); current=self.o.session_id; self.sessions.blockSignals(True); self.sessions.clear()
@@ -85,9 +111,9 @@ class Window(QMainWindow):
         for i,block in enumerate(code_blocks):result=result.replace(f"@@CODE{i}@@",block)
         return result
     def render_message(self,role,content,timestamp=None,mid=None,highlight=""):
-        self._message_counter+=1; mid=mid or f"m{self._message_counter}"; self._messages[mid]=content; label="You" if role=="user" else "Findupto AI"; stamp=timestamp or datetime.now().strftime("%H:%M"); body=html.escape(content).replace("\n","<br>") if role=="user" else self.render_markdown(content)
+        self._message_counter+=1; mid=mid or f"m{self._message_counter}"; self._messages[mid]=content; label="You" if role=="user" else "Findupto AI"; stamp=timestamp or datetime.now().strftime("%H:%M"); stamp_html=f' <small>{html.escape(str(stamp))}</small>' if self._show_timestamps else ""; body=html.escape(content).replace("\n","<br>") if role=="user" else self.render_markdown(content)
         if highlight:body=re.sub(re.escape(html.escape(highlight)),lambda m:f'<span style="background:#facc15;color:#111827">{m.group(0)}</span>',body,flags=re.IGNORECASE)
-        button=f'<a href="copy:{html.escape(mid)}">Copy</a>'; bubble_class="user-bubble" if role=="user" else "ai-bubble"; bubble=f'<div class="{bubble_class}" style="margin:8px 4px;padding:10px 14px;border-radius:12px;"><div><b>{label}</b> <small>{html.escape(str(stamp))}</small> <small>•</small> {button}</div><div style="margin-top:5px;">{body}</div></div>'; self.chat.append(bubble)
+        button=f'<a href="copy:{html.escape(mid)}">Copy</a>'; bubble_class="user-bubble" if role=="user" else "ai-bubble"; bubble=f'<div class="{bubble_class}" style="margin:8px 4px;padding:10px 14px;border-radius:12px;"><div><b>{label}</b>{stamp_html} <small>•</small> {button}</div><div style="margin-top:5px;">{body}</div></div>'; self.chat.append(bubble)
     def load_session_view(self,highlight=""):
         self.chat.clear();self._last_response="";self._messages.clear();self._message_counter=0
         for message in self.o.session_messages():self.render_message(message["role"],message["content"],message.get("created_at"),highlight=highlight);self._last_response=message["content"] if message["role"]=="assistant" else self._last_response
@@ -179,6 +205,7 @@ class Window(QMainWindow):
             source=documents[dialog.list.currentRow()]["source"]
             if QMessageBox.question(self,"Remove document",f"Remove this document from local knowledge?\n\n{source}")==QMessageBox.Yes and self.o.delete_document(source):self.chat.append(f"<i>Removed from local knowledge: {Path(source).name}</i>")
     def closeEvent(self,event):
+        if self.settings.value("ui/restore_geometry",True,type=bool):self.settings.setValue("window/geometry",self.saveGeometry())
         if isinstance(self.worker,StreamWorker) and self.worker.isRunning():self.worker.stop()
         if self.worker and self.worker.isRunning():self.worker.quit();self.worker.wait(2000)
         self.o.memory.close();self.o.knowledge.close();event.accept()
