@@ -28,6 +28,7 @@ class Window(QMainWindow):
         self.o = Orchestrator()
         self.pending_tool = None
         self.worker = None
+        self._last_ingest_path = ""
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -129,6 +130,7 @@ class Window(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Add local document", "", "Documents (*.txt *.md *.markdown *.json *.csv *.py *.pdf)")
         if not path or (self.worker and self.worker.isRunning()):
             return
+        self._last_ingest_path = path
         self.status.setText("Indexing document locally…")
         self.start_worker(self.o.ingest, self.receive_ingest, path)
 
