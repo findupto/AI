@@ -9,28 +9,49 @@ class LocalLLM:
         self.error = None
         self.base_dir = (base_dir or Path.cwd()).resolve()
         raw_path = os.getenv("FINDUPTO_MODEL_PATH", config["model"]["path"])
+        self.load_model(raw_path)
+
+    def resolve_path(self, raw_path: str | os.PathLike) -> Path:
         path = Path(raw_path).expanduser()
         if not path.is_absolute():
             path = self.base_dir / path
-        path = path.resolve()
+        return path.resolve()
+
+    def load_model(self, raw_path: str | os.PathLike) -> bool:
+        path = self.resolve_path(raw_path)
+        self.model = None
+        self.error = None
         if not path.exists():
             self.error = f"Local model not found: {path}"
-            return
+            return False
+        if not path.is_file():
+            self.error = f"Local model path is not a file: {path}"
+            return False
+        if path.suffix.lower() != ".gguf":
+            self.error = f"Unsupported local model format: {path.suffix or 'unknown'} (expected .gguf)"
+            return False
         try:
             from llama_cpp import Llama
             self.model = Llama(
                 model_path=str(path),
-                n_ctx=config["model"].get("context_size", 8192),
-                n_gpu_layers=config["model"].get("gpu_layers", -1),
-                n_threads=config["model"].get("threads", 8),
+                n_ctx=self.config["model"].get("context_size", 8192),
+                n_gpu_layers=self.config["model"].get("gpu_layers", -1),
+                n_threads=self.config["model"].get("threads", 8),
                 verbose=False,
             )
+            self.config["model"]["path"] = str(path)
+            return True
         except Exception as exc:
             self.error = f"Could not load local model: {exc}"
+            return False
 
     @property
     def ready(self):
         return self.model is not None
+
+    @property
+    def model_path(self):
+        return self.config["model"].get("path", "")
 
     def chat(self, messages: list[dict]) -> str:
         if not self.ready:
