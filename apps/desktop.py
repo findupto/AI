@@ -27,11 +27,13 @@ class Window(QMainWindow):
         self.resize(1000, 720)
         self.o = Orchestrator()
         self.pending_tool = None
+        self.worker = None
 
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
-        self.status = QLabel("Local AI • " + ("Model ready" if self.o.llm.ready else "Model not loaded"))
+        model_state = "Model ready" if self.o.llm.ready else f"Model not loaded — {self.o.llm.error or 'unknown error'}"
+        self.status = QLabel("Local AI • " + model_state)
         layout.addWidget(self.status)
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
@@ -65,7 +67,7 @@ class Window(QMainWindow):
         layout.addLayout(row)
 
         if not self.o.llm.ready:
-            self.chat.append("Add a GGUF model at models/model.gguf (or set FINDUPTO_MODEL_PATH) and install: pip install -e .[local]")
+            self.chat.append("<b>Model setup:</b> Add a compatible GGUF model at models/model.gguf or set FINDUPTO_MODEL_PATH, then install the local extra with <code>pip install -e .[local]</code>.")
 
     def start_worker(self, action, *args):
         self.worker = Worker(action, *args)
@@ -74,7 +76,7 @@ class Window(QMainWindow):
 
     def send(self):
         text = self.input.text().strip()
-        if not text or (hasattr(self, "worker") and self.worker.isRunning()) or self.pending_tool:
+        if not text or (self.worker and self.worker.isRunning()) or self.pending_tool:
             return
         self.chat.append(f"<b>You:</b> {text}")
         self.input.clear()
@@ -119,11 +121,19 @@ class Window(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Add local document", "", "Documents (*.txt *.md *.markdown *.json *.csv *.py *.pdf)")
         if not path:
             return
-        try:
-            n = self.o.ingest(path)
-            self.chat.append(f"<i>Indexed {Path(path).name} ({n} characters) with local provenance.</i>")
-        except Exception as exc:
-            QMessageBox.warning(self, "Document ingestion failed", str(exc))
+        if self.worker and self.worker.isRunning():
+            return
+        self.status.setText("Indexing document locally…")
+        self.start_worker(self.o.ingest, path)
+
+    def closeEvent(self, event):
+        if self.worker and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait(2000)
+        event.accept()
+
+    def receive_ingest(self, result):
+        pass
 
 
 def main():
