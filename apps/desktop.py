@@ -62,13 +62,16 @@ class Window(QMainWindow):
         send = QPushButton("Send")
         send.clicked.connect(self.send)
         row.addWidget(send)
+        model_btn = QPushButton("Choose model")
+        model_btn.clicked.connect(self.choose_model)
+        row.addWidget(model_btn)
         file_btn = QPushButton("Add document")
         file_btn.clicked.connect(self.ingest)
         row.addWidget(file_btn)
         layout.addLayout(row)
 
         if not self.o.llm.ready:
-            self.chat.append("<b>Model setup:</b> Add a compatible GGUF model at models/model.gguf or set FINDUPTO_MODEL_PATH, then install the local extra with <code>pip install -e .[local]</code>.")
+            self.chat.append("<b>Model setup:</b> Choose a compatible GGUF model, or add one at models/model.gguf / set FINDUPTO_MODEL_PATH. Install the local extra with <code>pip install -e .[local]</code>.")
 
     def start_worker(self, action, callback, *args):
         self.worker = Worker(action, *args)
@@ -99,6 +102,27 @@ class Window(QMainWindow):
             return
         self.chat.append(f"<b>Findupto AI:</b> {value.get('text', value) if isinstance(value, dict) else value}")
         self.status.setText("Local AI")
+
+    def choose_model(self):
+        if self.worker and self.worker.isRunning() or self.pending_tool:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Choose local GGUF model", str(self.o.llm.resolve_path("models")), "GGUF models (*.gguf)")
+        if not path:
+            return
+        self.status.setText("Loading local model…")
+        self.start_worker(self.o.llm.load_model, self.receive_model, path)
+
+    def receive_model(self, result):
+        if not result["ok"]:
+            self.status.setText("Local AI • model error")
+            QMessageBox.warning(self, "Model load failed", str(result["value"]))
+            return
+        if not result["value"]:
+            self.status.setText("Local AI • model error")
+            QMessageBox.warning(self, "Model load failed", self.o.llm.error or "The model could not be loaded.")
+            return
+        self.chat.append(f"<i>Loaded local model: {Path(self.o.llm.model_path).name}</i>")
+        self.status.setText(f"Local AI • {Path(self.o.llm.model_path).name}")
 
     def approve_tool(self):
         if not self.pending_tool:
