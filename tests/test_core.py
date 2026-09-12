@@ -62,3 +62,19 @@ def test_memory_store_is_thread_safe(tmp_path):
         thread.join()
 
     assert len(store.recent(20)) == 8
+
+
+def test_memory_sessions_are_isolated(tmp_path):
+    from memory.store import MemoryStore
+
+    store = MemoryStore(str(tmp_path / "memory.db"))
+    first = store.list_sessions()[0]["id"]
+    second = store.create_session("Project")
+    store.add("user", "first", first)
+    store.add("user", "second", second)
+    assert store.recent(10, first)[0]["content"] == "first"
+    assert store.recent(10, second)[0]["content"] == "second"
+    store.rename_session(second, "Renamed")
+    assert any(s["id"] == second and s["title"] == "Renamed" for s in store.list_sessions())
+    assert store.delete_session(second) is True
+    assert all(s["id"] != second for s in store.list_sessions())
