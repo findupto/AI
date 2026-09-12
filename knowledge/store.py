@@ -47,6 +47,20 @@ class KnowledgeStore:
                 rows = []
         return [{"source": s, "text": t} for s, t in rows]
 
+    def documents(self) -> list[dict]:
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT source, length(content), created_at FROM documents ORDER BY created_at DESC"
+            ).fetchall()
+        return [{"source": source, "characters": characters, "created_at": created_at} for source, characters, created_at in rows]
+
+    def delete(self, source: str) -> bool:
+        with self._lock:
+            cursor = self.db.execute("DELETE FROM documents WHERE source = ?", (source,))
+            self.db.execute("DELETE FROM chunks WHERE source = ?", (source,))
+            self.db.commit()
+            return cursor.rowcount > 0
+
     def close(self):
         with self._lock:
             self.db.close()
