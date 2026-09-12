@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 MODEL_REPO = "bartowski/Qwen_Qwen3-4B-GGUF"
 MODEL_FILE = "Qwen3-4B-Q4_K_M.gguf"
+# The repository's actual filename includes the Qwen3-4B prefix.
 MODEL_URL = f"https://huggingface.co/{MODEL_REPO}/resolve/main/{MODEL_FILE}?download=true"
 
 
