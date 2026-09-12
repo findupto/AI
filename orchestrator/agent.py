@@ -10,8 +10,14 @@ class Tool:
     requires_confirmation: bool = True
 
 
+@dataclass
+class ToolRequest:
+    tool: Tool
+    tool_input: str
+
+
 class Agent:
-    """Small, model-agnostic tool loop for the local orchestrator."""
+    """Model-agnostic agent loop with explicit tool approval."""
 
     def __init__(self, llm, policy):
         self.llm = llm
@@ -27,12 +33,6 @@ class Agent:
         return "\n".join(f"- {t.name}: {t.description}" for t in self.tools.values())
 
     def run(self, user_text: str, context: str = "") -> str:
-        """Ask the local model for an answer; tool execution is explicit and bounded.
-
-        The model is never allowed to silently execute a tool. Tool calls use the
-        simple ACTION format: TOOL:<name>\nINPUT:<text>. The UI can confirm them
-        before the handler is invoked.
-        """
         prompt = (
             "You are the Findupto AI agent. Answer directly when no tool is needed.\n"
             "Available tools:\n" + self.tool_catalog() + "\n\n"
@@ -54,4 +54,18 @@ class Agent:
         name = lines[0][5:].strip()
         if name not in self.tools:
             return None
-        return self.tools[name], lines[1][6:].strip()
+        return ToolRequest(self.tools[name], lines[1][6:].strip())
+
+    def finalize_tool_result(self, user_text: str, request: ToolRequest, ok: bool, result: str) -> str:
+        status = "succeeded" if ok else "failed"
+        prompt = (
+            f"The approved tool '{request.tool.name}' {status}.\n"
+            f"Tool input: {request.tool_input}\n"
+            f"Tool result:\n{result}\n\n"
+            f"Original user request: {user_text}\n"
+            "Give the user a concise final answer. Do not claim anything beyond the tool result."
+        )
+        return self.llm.chat([
+            {"role": "system", "content": "You are Findupto AI, a local-first assistant."},
+            {"role": "user", "content": prompt},
+        ])
