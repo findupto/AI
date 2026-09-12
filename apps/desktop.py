@@ -165,14 +165,23 @@ class Window(QMainWindow):
         value = result["value"]
         if value.get("kind") == "tool_request":
             self.pending_tool = value
+            self.show_sources(value.get("sources", []))
             self.approval_label.setText(f"Allow tool '{value['tool']}' to run?")
             self.approval.show()
             self.status.setText("Waiting for tool approval")
             return
+        self.show_sources(value.get("sources", []))
         if value.get("kind") == "stopped":
             self.status.setText("Generation stopped")
             return
         self.status.setText("Local AI")
+
+    def show_sources(self, sources):
+        if not sources:
+            return
+        self.chat.append("<b>Sources:</b>")
+        for source in sources:
+            self.chat.append(f"• {source}")
 
     def choose_model(self):
         if self.worker and self.worker.isRunning() or self.pending_tool:
