@@ -13,3 +13,6 @@ class Policy:
 
     def python_timeout(self) -> int:
         return int(self.security.get("python_timeout_seconds", 8))
+
+    def shell_timeout(self) -> int:
+        return int(self.security.get("shell_timeout_seconds", 30))
