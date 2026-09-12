@@ -13,16 +13,30 @@ SYSTEM = """You are Findupto AI, a local-first standalone assistant. Be accurate
 
 class Orchestrator:
     def __init__(self, config_path="config/default.json"):
-        config = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        config_file = Path(config_path).expanduser()
+        if not config_file.is_absolute():
+            config_file = Path.cwd() / config_file
+        config_file = config_file.resolve()
+        self.base_dir = config_file.parent.parent
+        config = json.loads(config_file.read_text(encoding="utf-8"))
         self.config = config
         self.policy = Policy(config)
-        self.llm = LocalLLM(config)
-        self.memory = MemoryStore(config["memory"]["database"])
-        self.knowledge = KnowledgeStore(config["knowledge"]["database"], config["knowledge"]["chunk_size"], config["knowledge"]["chunk_overlap"])
+        self.llm = LocalLLM(config, base_dir=self.base_dir)
+        self.memory = MemoryStore(self._data_path(config["memory"]["database"]))
+        self.knowledge = KnowledgeStore(
+            self._data_path(config["knowledge"]["database"]),
+            config["knowledge"]["chunk_size"],
+            config["knowledge"]["chunk_overlap"],
+        )
+
+    def _data_path(self, value: str) -> str:
+        path = Path(value).expanduser()
+        return str(path if path.is_absolute() else self.base_dir / path)
 
     def ingest(self, path: str):
-        text = read_document(path)
-        self.knowledge.ingest(str(Path(path).resolve()), text)
+        document = Path(path).expanduser().resolve()
+        text = read_document(str(document))
+        self.knowledge.ingest(str(document), text)
         return len(text)
 
     def answer(self, user_text: str) -> str:
