@@ -8,11 +8,24 @@ class FakeLLM:
     def chat(self, messages):
         return self.response
 
+    def stream(self, messages, on_token, stop_event=None):
+        for token in self.response.split(" "):
+            on_token(token + " ")
+        return self.response
+
 
 def test_plain_answer_passes_through():
     agent = Agent(FakeLLM("hello"), policy=None)
     assert agent.run("hi") == "hello"
     assert agent.parse_call("hello") is None
+
+
+def test_streaming_answer_emits_tokens():
+    emitted = []
+    agent = Agent(FakeLLM("hello world"), policy=None)
+    assert agent.run_stream("hi", "", emitted.append) == "hello world"
+    assert "hello " in emitted
+    assert "world " in emitted
 
 
 def test_tool_call_is_parsed_without_execution():
