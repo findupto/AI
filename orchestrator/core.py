@@ -79,8 +79,12 @@ class Orchestrator:
     def session_messages(self):
         return self.memory.recent(200, self.session_id)
 
-    def answer(self, user_text: str) -> str:
+    def _record_user(self, user_text: str):
+        self.memory.auto_title(self.session_id, user_text)
         self.memory.add("user", user_text, self.session_id)
+
+    def answer(self, user_text: str) -> str:
+        self._record_user(user_text)
         context, _ = self._context(user_text)
         messages = [{"role": "system", "content": SYSTEM}]
         if context:
@@ -96,7 +100,7 @@ class Orchestrator:
         return run_python(code, self.policy.python_timeout())
 
     def prepare_agent_request(self, user_text: str):
-        self.memory.add("user", user_text, self.session_id)
+        self._record_user(user_text)
         context, sources = self._context(user_text)
         draft = self.agent.run(user_text, context)
         request = self.agent.parse_call(draft)
@@ -111,7 +115,7 @@ class Orchestrator:
         return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input, "sources": sources}
 
     def prepare_agent_request_stream(self, user_text: str, on_token, stop_event: Event | None = None):
-        self.memory.add("user", user_text, self.session_id)
+        self._record_user(user_text)
         context, sources = self._context(user_text)
         draft = self.agent.run_stream(user_text, context, on_token, stop_event)
         if stop_event and stop_event.is_set():
