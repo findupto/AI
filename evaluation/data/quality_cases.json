@@ -1,0 +1,12 @@
+[
+  {
+    "id": "clear-answer",
+    "response": "The local model loaded successfully and is ready for chat.",
+    "required": ["local model", "ready for chat"]
+  },
+  {
+    "id": "source-aware",
+    "response": "According to the indexed document, the project uses SQLite for persistent memory.",
+    "required": ["indexed document", "SQLite"]
+  }
+]
