@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 
@@ -6,7 +7,7 @@ class LocalLLM:
         self.config = config
         self.model = None
         self.error = None
-        path = Path(config["model"]["path"])
+        path = Path(os.getenv("FINDUPTO_MODEL_PATH", config["model"]["path"]))
         if not path.exists():
             self.error = f"Local model not found: {path}"
             return
