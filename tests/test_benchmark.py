@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from evaluation.benchmark import evaluate_case, evaluate_cases, main
 
 
@@ -41,3 +43,16 @@ def test_benchmark_cli(tmp_path, monkeypatch, capsys):
     output = json.loads(capsys.readouterr().out)
     assert output["passed"] == 1
     assert output["failed"] == 0
+
+
+def test_benchmark_cli_fail_on_error(tmp_path, monkeypatch, capsys):
+    sample = tmp_path / "cases.json"
+    sample.write_text(json.dumps([
+        {"id": "bad", "response": "unsafe", "required": ["missing"]},
+    ]), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["benchmark", str(sample), "--fail-on-error"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["failed"] == 1
