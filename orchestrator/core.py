@@ -6,7 +6,7 @@ from knowledge.ingest import read_document
 from knowledge.store import KnowledgeStore
 from memory.store import MemoryStore
 from models.local_llm import LocalLLM
-from orchestrator.agent import Agent, Tool
+from orchestrator.agent import Agent, Tool, ToolRequest
 from security.policy import Policy
 from tools.python_tool import run_python
 
@@ -57,15 +57,40 @@ class Orchestrator:
             return False, "Python tool requires explicit user confirmation in the desktop UI."
         return run_python(code, self.policy.python_timeout())
 
-    def agent_answer(self, user_text: str) -> str:
+    def prepare_agent_request(self, user_text: str):
+        self.memory.add("user", user_text)
         context_rows = self.knowledge.search(user_text, 4)
         context = "\n\n".join(f"SOURCE: {r['source']}\n{r['text']}" for r in context_rows)
         draft = self.agent.run(user_text, context)
-        call = self.agent.parse_call(draft)
-        if call is None:
-            return draft
-        tool, tool_input = call
-        if tool.requires_confirmation:
-            return f"Tool confirmation required: {tool.name}\nINPUT: {tool_input}\n\nThe requested tool has not been executed."
+        request = self.agent.parse_call(draft)
+        if request is None:
+            self.memory.add("assistant", draft)
+            return {"kind": "answer", "text": draft}
+        if not request.tool.requires_confirmation:
+            ok, result = request.tool.handler(request.tool_input)
+            final = self.agent.finalize_tool_result(user_text, request, ok, result)
+            self.memory.add("assistant", final)
+            return {"kind": "answer", "text": final}
+        return {"kind": "tool_request", "text": draft, "user_text": user_text, "tool": request.tool.name, "input": request.tool_input}
+
+    def approve_tool(self, user_text: str, tool_name: str, tool_input: str):
+        tool = self.agent.tools.get(tool_name)
+        if tool is None:
+            return "Tool is no longer available."
+        if not tool.requires_confirmation:
+            return "This tool did not require approval."
         ok, result = tool.handler(tool_input)
-        return result if ok else f"Tool error: {result}"
+        final = self.agent.finalize_tool_result(user_text, ToolRequest(tool, tool_input), ok, result)
+        self.memory.add("assistant", final)
+        return final
+
+    def reject_tool(self, user_text: str, tool_name: str, tool_input: str):
+        message = f"I did not run the '{tool_name}' tool. The requested action was rejected."
+        self.memory.add("assistant", message)
+        return message
+
+    def agent_answer(self, user_text: str) -> str:
+        result = self.prepare_agent_request(user_text)
+        if result["kind"] == "answer":
+            return result["text"]
+        return f"Tool confirmation required: {result['tool']}\nINPUT: {result['input']}\n\nApprove this tool request in the desktop UI."
