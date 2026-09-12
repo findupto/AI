@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 from threading import Event
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox, QComboBox, QInputDialog
 from orchestrator.core import Orchestrator
 
 
@@ -79,6 +79,23 @@ class Window(QMainWindow):
         model_state = "Model ready" if self.o.llm.ready else f"Model not loaded — {self.o.llm.error or 'unknown error'}"
         self.status = QLabel("Local AI • " + model_state)
         layout.addWidget(self.status)
+
+        session_row = QHBoxLayout()
+        session_row.addWidget(QLabel("Chat:"))
+        self.sessions = QComboBox()
+        self.sessions.currentIndexChanged.connect(self.switch_session)
+        session_row.addWidget(self.sessions, 1)
+        new_chat = QPushButton("New")
+        new_chat.clicked.connect(self.new_session)
+        session_row.addWidget(new_chat)
+        rename_chat = QPushButton("Rename")
+        rename_chat.clicked.connect(self.rename_session)
+        session_row.addWidget(rename_chat)
+        delete_chat = QPushButton("Delete")
+        delete_chat.clicked.connect(self.delete_session)
+        session_row.addWidget(delete_chat)
+        layout.addLayout(session_row)
+
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
         layout.addWidget(self.chat)
@@ -120,6 +137,7 @@ class Window(QMainWindow):
         row.addWidget(docs_btn)
         layout.addLayout(row)
 
+        self.refresh_sessions()
         if not self.o.llm.ready:
             self.chat.append("<b>Model setup:</b> Choose a compatible GGUF model, or add one at models/model.gguf / set FINDUPTO_MODEL_PATH. Install the local extra with <code>pip install -e .[local]</code>.")
 
@@ -127,6 +145,62 @@ class Window(QMainWindow):
         self.worker = Worker(action, *args)
         self.worker.done.connect(callback)
         self.worker.start()
+
+    def refresh_sessions(self):
+        sessions = self.o.list_sessions()
+        current = self.o.session_id
+        self.sessions.blockSignals(True)
+        self.sessions.clear()
+        for session in sessions:
+            self.sessions.addItem(session["title"], session["id"])
+        index = self.sessions.findData(current)
+        if index >= 0:
+            self.sessions.setCurrentIndex(index)
+        self.sessions.blockSignals(False)
+        self.load_session_view()
+
+    def load_session_view(self):
+        self.chat.clear()
+        for message in self.o.session_messages():
+            label = "You" if message["role"] == "user" else "Findupto AI"
+            self.chat.append(f"<b>{label}:</b> {message['content']}")
+
+    def switch_session(self, index):
+        if index < 0 or (self.worker and self.worker.isRunning()) or self.pending_tool:
+            return
+        session_id = self.sessions.itemData(index)
+        if session_id and self.o.switch_session(session_id):
+            self.load_session_view()
+            self.status.setText("Local AI")
+
+    def new_session(self):
+        if self.worker and self.worker.isRunning() or self.pending_tool:
+            return
+        title, ok = QInputDialog.getText(self, "New chat", "Chat name:")
+        if not ok:
+            return
+        self.o.new_session(title or "New chat")
+        self.refresh_sessions()
+
+    def rename_session(self):
+        if self.worker and self.worker.isRunning() or self.pending_tool:
+            return
+        current = self.sessions.currentText()
+        title, ok = QInputDialog.getText(self, "Rename chat", "Chat name:", text=current)
+        if ok:
+            self.o.rename_session(title)
+            self.refresh_sessions()
+
+    def delete_session(self):
+        if self.worker and self.worker.isRunning() or self.pending_tool:
+            return
+        if len(self.o.list_sessions()) <= 1:
+            QMessageBox.information(self, "Delete chat", "At least one chat must remain.")
+            return
+        if QMessageBox.question(self, "Delete chat", f"Delete '{self.sessions.currentText()}' and its messages?") != QMessageBox.Yes:
+            return
+        self.o.delete_session(self.o.session_id)
+        self.refresh_sessions()
 
     def send(self):
         text = self.input.text().strip()
@@ -266,6 +340,8 @@ class Window(QMainWindow):
         if self.worker and self.worker.isRunning():
             self.worker.quit()
             self.worker.wait(2000)
+        self.o.memory.close()
+        self.o.knowledge.close()
         event.accept()
 
 
