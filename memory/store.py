@@ -43,6 +43,19 @@ class MemoryStore:
             self.db.execute("UPDATE sessions SET title = ? WHERE id = ?", (title.strip()[:120] or "Untitled", session_id))
             self.db.commit()
 
+    def auto_title(self, session_id: str, text: str):
+        title = " ".join(text.strip().split())
+        if not title:
+            return
+        with self._lock:
+            current = self.db.execute("SELECT title FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if not current or current[0] not in ("New chat", "Untitled"):
+                return
+            if len(title) > 48:
+                title = title[:45].rstrip() + "..."
+            self.db.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
+            self.db.commit()
+
     def delete_session(self, session_id: str):
         with self._lock:
             count = self.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
