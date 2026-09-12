@@ -41,6 +41,12 @@ class Orchestrator:
         self.knowledge.ingest(str(document), text)
         return len(text)
 
+    def list_documents(self):
+        return self.knowledge.documents()
+
+    def delete_document(self, source: str):
+        return self.knowledge.delete(source)
+
     def answer(self, user_text: str) -> str:
         self.memory.add("user", user_text)
         context_rows = self.knowledge.search(user_text, 4)
