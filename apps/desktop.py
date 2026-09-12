@@ -1,4 +1,5 @@
 import html
+import re
 import sys
 from pathlib import Path
 from threading import Event
@@ -73,6 +74,7 @@ class Window(QMainWindow):
         self.worker = None
         self._last_ingest_path = ""
         self._stream_text = ""
+        self._last_response = ""
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -127,6 +129,9 @@ class Window(QMainWindow):
         self.stop_btn.clicked.connect(self.stop_generation)
         self.stop_btn.setEnabled(False)
         row.addWidget(self.stop_btn)
+        copy_btn = QPushButton("Copy last")
+        copy_btn.clicked.connect(self.copy_last_response)
+        row.addWidget(copy_btn)
         model_btn = QPushButton("Choose model")
         model_btn.clicked.connect(self.choose_model)
         row.addWidget(model_btn)
@@ -160,15 +165,54 @@ class Window(QMainWindow):
         self.sessions.blockSignals(False)
         self.load_session_view()
 
+    def render_markdown(self, content):
+        safe = html.escape(content)
+        code_blocks = []
+
+        def stash_code(match):
+            code = match.group(2)
+            index = len(code_blocks)
+            code_blocks.append(f"<pre><code>{code}</code></pre>")
+            return f"@@CODE{index}@@"
+
+        safe = re.sub(r"```(?:[A-Za-z0-9_+-]+)?\n?(.*?)```", lambda m: stash_code(type("M", (), {"group": lambda self, n: m.group(1)})()), safe, flags=re.DOTALL)
+        safe = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", safe)
+        safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
+        safe = re.sub(r"(?<!\*)\*([^*\n]+)\*", r"<i>\1</i>", safe)
+        lines = safe.splitlines()
+        rendered = []
+        in_list = False
+        for line in lines:
+            if re.match(r"^\s*[-*]\s+", line):
+                if not in_list:
+                    rendered.append("<ul>")
+                    in_list = True
+                rendered.append("<li>" + re.sub(r"^\s*[-*]\s+", "", line) + "</li>")
+            else:
+                if in_list:
+                    rendered.append("</ul>")
+                    in_list = False
+                if line.strip():
+                    rendered.append(f"<div>{line}</div>")
+        if in_list:
+            rendered.append("</ul>")
+        result = "".join(rendered)
+        for index, block in enumerate(code_blocks):
+            result = result.replace(f"@@CODE{index}@@", block)
+        return result
+
     def render_message(self, role, content):
         label = "You" if role == "user" else "Findupto AI"
-        safe = html.escape(content).replace("\n", "<br>")
-        self.chat.append(f"<p><b>{label}:</b><br>{safe}</p>")
+        body = html.escape(content).replace("\n", "<br>") if role == "user" else self.render_markdown(content)
+        self.chat.append(f"<p><b>{label}:</b><br>{body}</p>")
 
     def load_session_view(self):
         self.chat.clear()
+        self._last_response = ""
         for message in self.o.session_messages():
             self.render_message(message["role"], message["content"])
+            if message["role"] == "assistant":
+                self._last_response = message["content"]
 
     def switch_session(self, index):
         if index < 0 or (self.worker and self.worker.isRunning()) or self.pending_tool:
@@ -242,6 +286,7 @@ class Window(QMainWindow):
             self.status.setText("Local AI • error")
             return
         value = result["value"]
+        self._last_response = value.get("text", "")
         if value.get("kind") == "tool_request":
             self.pending_tool = value
             self.show_sources(value.get("sources", []))
@@ -263,6 +308,12 @@ class Window(QMainWindow):
         self.chat.append("<b>Sources:</b>")
         for source in sources:
             self.chat.append(f"• {html.escape(source)}")
+
+    def copy_last_response(self):
+        if not self._last_response:
+            return
+        QApplication.clipboard().setText(self._last_response)
+        self.status.setText("Copied last response")
 
     def choose_model(self):
         if self.worker and self.worker.isRunning() or self.pending_tool:
@@ -308,6 +359,7 @@ class Window(QMainWindow):
             self.chat.append(f"<b>Error:</b> {html.escape(str(result['value']))}")
             self.status.setText("Local AI • error")
             return
+        self._last_response = result["value"]
         self.render_message("assistant", result["value"])
         self.status.setText("Local AI")
 
