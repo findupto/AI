@@ -1,0 +1,12 @@
+[
+  {
+    "id": "local-answer",
+    "response": "This is a local AI response using the configured model.",
+    "required": ["local AI", "configured model"]
+  },
+  {
+    "id": "safe-empty",
+    "response": "",
+    "required": ["local"]
+  }
+]
