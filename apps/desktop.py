@@ -8,6 +8,7 @@ from PySide6.QtCore import QThread, Signal, QSettings
 from PySide6.QtGui import QTextCursor, QKeySequence, QShortcut, QFont
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextBrowser, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox, QComboBox, QInputDialog, QCheckBox, QSpinBox, QFormLayout
 from orchestrator.core import Orchestrator
+from orchestrator.export import session_to_markdown, session_to_html, session_to_json
 
 class Worker(QThread):
     done=Signal(object)
@@ -56,7 +57,7 @@ class Window(QMainWindow):
         for text,slot in (("Approve",self.approve_tool),("Reject",self.reject_tool)): b=QPushButton(text); b.clicked.connect(slot); approval_row.addWidget(b)
         self.approval.hide(); layout.addWidget(self.approval)
         row=QHBoxLayout(); self.input=QLineEdit(); self.input.setPlaceholderText("Ask your local AI…  (Ctrl+Enter to send)"); self.input.returnPressed.connect(self.send); row.addWidget(self.input)
-        for text,slot in (("Send",self.send),("Stop",self.stop_generation),("Copy last",self.copy_last_response),("Choose model",self.choose_model),("Add document",self.ingest),("Knowledge",self.show_documents),("Settings",self.open_settings)):
+        for text,slot in (("Send",self.send),("Stop",self.stop_generation),("Copy last",self.copy_last_response),("Export",self.export_conversation),("Choose model",self.choose_model),("Add document",self.ingest),("Knowledge",self.show_documents),("Settings",self.open_settings)):
             b=QPushButton(text); b.clicked.connect(slot); b.setEnabled(text!="Stop");
             if text=="Stop":self.stop_btn=b
             row.addWidget(b)
@@ -78,7 +79,7 @@ class Window(QMainWindow):
         if dialog.exec()!=QDialog.Accepted:return
         values=dialog.values(); self.settings.setValue("ui/theme",values["theme"]); self.settings.setValue("ui/show_timestamps",values["show_timestamps"]); self.settings.setValue("ui/font_size",values["font_size"]); self.settings.setValue("ui/restore_geometry",values["restore_geometry"]); self.apply_preferences(); self.status.setText("Settings saved")
     def install_shortcuts(self):
-        for key,slot in (("Ctrl+N",self.new_session),("Ctrl+F",lambda:self.search_input.setFocus()),("Ctrl+L",lambda:self.input.setFocus()),("Ctrl+Enter",self.send),("Escape",self.stop_generation),("Ctrl+Shift+C",self.copy_last_response)):
+        for key,slot in (("Ctrl+N",self.new_session),("Ctrl+F",lambda:self.search_input.setFocus()),("Ctrl+L",lambda:self.input.setFocus()),("Ctrl+Enter",self.send),("Escape",self.stop_generation),("Ctrl+Shift+C",self.copy_last_response),("Ctrl+Shift+E",self.export_conversation)):
             QShortcut(QKeySequence(key),self).activated.connect(slot)
     def start_worker(self,action,callback,*args):self.worker=Worker(action,*args);self.worker.done.connect(callback);self.worker.start()
     def refresh_sessions(self):
@@ -87,6 +88,23 @@ class Window(QMainWindow):
         index=self.sessions.findData(current)
         if index>=0:self.sessions.setCurrentIndex(index)
         self.sessions.blockSignals(False); self.load_session_view()
+    def active_session_title(self):
+        return next((s["title"] for s in self.o.list_sessions() if s["id"]==self.o.session_id),"Conversation")
+    def export_conversation(self):
+        if self.worker and self.worker.isRunning() or self.pending_tool:return
+        messages=self.o.session_messages()
+        if not messages:QMessageBox.information(self,"Export conversation","There are no messages to export yet.");return
+        path,_=QFileDialog.getSaveFileName(self,"Export conversation",self.active_session_title(),"Markdown (*.md);;HTML (*.html);;JSON (*.json)")
+        if not path:return
+        suffix=Path(path).suffix.lower()
+        renderer={".md":session_to_markdown,".html":session_to_html,".json":session_to_json}.get(suffix)
+        if renderer is None:
+            QMessageBox.warning(self,"Export conversation","Choose a .md, .html, or .json filename.");return
+        try:
+            Path(path).write_text(renderer(messages,self.active_session_title()),encoding="utf-8")
+        except Exception as exc:
+            QMessageBox.warning(self,"Export failed",str(exc));return
+        self.status.setText(f"Exported conversation to {Path(path).name}")
     def render_markdown(self,content):
         safe=html.escape(content); code_blocks=[]
         def replace_code(m):
