@@ -1,0 +1,19 @@
+{
+  "app_name": "Findupto AI",
+  "model": {
+    "path": "models/model.gguf",
+    "context_size": 8192,
+    "gpu_layers": -1,
+    "threads": 8,
+    "temperature": 0.7,
+    "max_tokens": 1024
+  },
+  "memory": {"database": "data/ai.db"},
+  "knowledge": {"database": "data/knowledge.db", "chunk_size": 1200, "chunk_overlap": 150},
+  "security": {
+    "allow_network": false,
+    "allow_shell": false,
+    "python_timeout_seconds": 8,
+    "require_confirmation_for_tools": true
+  }
+}
