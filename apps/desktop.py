@@ -69,9 +69,9 @@ class Window(QMainWindow):
         if not self.o.llm.ready:
             self.chat.append("<b>Model setup:</b> Add a compatible GGUF model at models/model.gguf or set FINDUPTO_MODEL_PATH, then install the local extra with <code>pip install -e .[local]</code>.")
 
-    def start_worker(self, action, *args):
+    def start_worker(self, action, callback, *args):
         self.worker = Worker(action, *args)
-        self.worker.done.connect(self.receive)
+        self.worker.done.connect(callback)
         self.worker.start()
 
     def send(self):
@@ -81,7 +81,7 @@ class Window(QMainWindow):
         self.chat.append(f"<b>You:</b> {text}")
         self.input.clear()
         self.status.setText("Thinking locally…")
-        self.start_worker(self.o.prepare_agent_request, text)
+        self.start_worker(self.o.prepare_agent_request, self.receive, text)
 
     def receive(self, result):
         if not result["ok"]:
@@ -105,7 +105,7 @@ class Window(QMainWindow):
         p = self.pending_tool
         self.approval.hide()
         self.status.setText("Running approved tool locally…")
-        self.start_worker(self.o.approve_tool, p["user_text"], p["tool"], p["input"])
+        self.start_worker(self.o.approve_tool, self.receive_tool_result, p["user_text"], p["tool"], p["input"])
         self.pending_tool = None
 
     def reject_tool(self):
@@ -114,26 +114,37 @@ class Window(QMainWindow):
         p = self.pending_tool
         self.approval.hide()
         self.status.setText("Rejecting tool request…")
-        self.start_worker(self.o.reject_tool, p["user_text"], p["tool"], p["input"])
+        self.start_worker(self.o.reject_tool, self.receive_tool_result, p["user_text"], p["tool"], p["input"])
         self.pending_tool = None
+
+    def receive_tool_result(self, result):
+        if not result["ok"]:
+            self.chat.append(f"<b>Error:</b> {result['value']}")
+            self.status.setText("Local AI • error")
+            return
+        self.chat.append(f"<b>Findupto AI:</b> {result['value']}")
+        self.status.setText("Local AI")
 
     def ingest(self):
         path, _ = QFileDialog.getOpenFileName(self, "Add local document", "", "Documents (*.txt *.md *.markdown *.json *.csv *.py *.pdf)")
-        if not path:
-            return
-        if self.worker and self.worker.isRunning():
+        if not path or (self.worker and self.worker.isRunning()):
             return
         self.status.setText("Indexing document locally…")
-        self.start_worker(self.o.ingest, path)
+        self.start_worker(self.o.ingest, self.receive_ingest, path)
+
+    def receive_ingest(self, result):
+        if not result["ok"]:
+            QMessageBox.warning(self, "Document ingestion failed", str(result["value"]))
+            self.status.setText("Local AI • error")
+            return
+        self.chat.append(f"<i>Indexed {Path(self._last_ingest_path).name} ({result['value']} characters) with local provenance.</i>")
+        self.status.setText("Local AI")
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
             self.worker.quit()
             self.worker.wait(2000)
         event.accept()
-
-    def receive_ingest(self, result):
-        pass
 
 
 def main():
