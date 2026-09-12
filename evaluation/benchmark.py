@@ -41,9 +41,13 @@ def evaluate_cases(cases: list[dict[str, object]]) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate local AI benchmark cases.")
     parser.add_argument("input", type=Path, help="UTF-8 JSON file containing a list of cases")
+    parser.add_argument("--fail-on-error", action="store_true", help="Exit with status 1 when any case fails")
     args = parser.parse_args()
     cases = json.loads(args.input.read_text(encoding="utf-8"))
-    print(json.dumps(evaluate_cases(cases), ensure_ascii=False, indent=2))
+    report = evaluate_cases(cases)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.fail_on_error and report["failed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
