@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable
+from threading import Event
 
 
 @dataclass
@@ -32,8 +33,8 @@ class Agent:
             return "No tools are currently available."
         return "\n".join(f"- {t.name}: {t.description}" for t in self.tools.values())
 
-    def run(self, user_text: str, context: str = "") -> str:
-        prompt = (
+    def _prompt(self, user_text: str, context: str = "") -> str:
+        return (
             "You are the Findupto AI agent. Answer directly when no tool is needed.\n"
             "Available tools:\n" + self.tool_catalog() + "\n\n"
             "If a tool is genuinely required, emit exactly:\n"
@@ -42,10 +43,18 @@ class Agent:
             + ("Local context:\n" + context + "\n" if context else "")
             + "User request: " + user_text
         )
+
+    def run(self, user_text: str, context: str = "") -> str:
         return self.llm.chat([
             {"role": "system", "content": "You are a local tool-using assistant."},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": self._prompt(user_text, context)},
         ])
+
+    def run_stream(self, user_text: str, context: str, on_token, stop_event: Event | None = None) -> str:
+        return self.llm.stream([
+            {"role": "system", "content": "You are a local tool-using assistant."},
+            {"role": "user", "content": self._prompt(user_text, context)},
+        ], on_token, stop_event)
 
     def parse_call(self, text: str):
         lines = [line.strip() for line in text.splitlines() if line.strip()]
