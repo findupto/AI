@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from threading import Event
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit, QLineEdit, QPushButton, QFileDialog, QLabel, QMessageBox, QListWidget, QDialog, QDialogButtonBox, QComboBox, QInputDialog
 from orchestrator.core import Orchestrator
 
@@ -74,6 +75,7 @@ class Window(QMainWindow):
         self.worker = None
         self._last_ingest_path = ""
         self._stream_text = ""
+        self._stream_start = None
         self._last_response = ""
 
         root = QWidget()
@@ -169,13 +171,13 @@ class Window(QMainWindow):
         safe = html.escape(content)
         code_blocks = []
 
-        def stash_code(match):
+        def replace_code(match):
             code = match.group(2)
             index = len(code_blocks)
             code_blocks.append(f"<pre><code>{code}</code></pre>")
             return f"@@CODE{index}@@"
 
-        safe = re.sub(r"```(?:[A-Za-z0-9_+-]+)?\n?(.*?)```", lambda m: stash_code(type("M", (), {"group": lambda self, n: m.group(1)})()), safe, flags=re.DOTALL)
+        safe = re.sub(r"```([A-Za-z0-9_+-]*)\n?(.*?)```", replace_code, safe, flags=re.DOTALL)
         safe = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", safe)
         safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
         safe = re.sub(r"(?<!\*)\*([^*\n]+)\*", r"<i>\1</i>", safe)
@@ -259,6 +261,9 @@ class Window(QMainWindow):
         self.input.clear()
         self._stream_text = ""
         self.chat.append("<p><b>Findupto AI:</b><br>")
+        cursor = QTextCursor(self.chat.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self._stream_start = cursor.position()
         self.status.setText("Generating locally…")
         self.stop_btn.setEnabled(True)
         self.worker = StreamWorker(self.o.prepare_agent_request_stream, text)
@@ -268,9 +273,13 @@ class Window(QMainWindow):
 
     def receive_token(self, token):
         self._stream_text += token
-        cursor = self.chat.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(token)
+        if self._stream_start is None:
+            return
+        cursor = QTextCursor(self.chat.document())
+        cursor.setPosition(self._stream_start)
+        cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        cursor.insertHtml(self.render_markdown(self._stream_text))
         self.chat.setTextCursor(cursor)
         self.chat.ensureCursorVisible()
 
@@ -281,6 +290,7 @@ class Window(QMainWindow):
 
     def receive_stream(self, result):
         self.stop_btn.setEnabled(False)
+        self._stream_start = None
         if not result["ok"]:
             self.chat.append(f"<b>Error:</b> {html.escape(str(result['value']))}")
             self.status.setText("Local AI • error")
