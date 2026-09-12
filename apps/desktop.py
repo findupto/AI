@@ -172,33 +172,53 @@ class Window(QMainWindow):
         code_blocks = []
 
         def replace_code(match):
-            code = match.group(2)
+            language = match.group(1).strip()
+            code = match.group(2).strip("\n")
             index = len(code_blocks)
-            code_blocks.append(f"<pre><code>{code}</code></pre>")
+            label = f'<div><small>{html.escape(language) if language else "code"}</small></div>'
+            code_blocks.append(label + f'<pre><code>{code}</code></pre>')
             return f"@@CODE{index}@@"
 
         safe = re.sub(r"```([A-Za-z0-9_+-]*)\n?(.*?)```", replace_code, safe, flags=re.DOTALL)
         safe = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", safe)
         safe = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
-        safe = re.sub(r"(?<!\*)\*([^*\n]+)\*", r"<i>\1</i>", safe)
+        safe = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<i>\1</i>", safe)
         lines = safe.splitlines()
         rendered = []
         in_list = False
+        list_type = None
         for line in lines:
-            if re.match(r"^\s*[-*]\s+", line):
+            stripped = line.strip()
+            heading = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+            unordered = re.match(r"^[-*]\s+(.+)$", stripped)
+            ordered = re.match(r"^\d+[.)]\s+(.+)$", stripped)
+            if heading:
+                if in_list:
+                    rendered.append(f"</{list_type}>")
+                    in_list = False
+                level = len(heading.group(1))
+                rendered.append(f"<h{level}>{heading.group(2)}</h{level}>")
+            elif unordered or ordered:
+                wanted = "ul" if unordered else "ol"
+                item = (unordered or ordered).group(1)
                 if not in_list:
-                    rendered.append("<ul>")
+                    rendered.append(f"<{wanted}>")
                     in_list = True
-                rendered.append("<li>" + re.sub(r"^\s*[-*]\s+", "", line) + "</li>")
+                    list_type = wanted
+                elif list_type != wanted:
+                    rendered.append(f"</{list_type}><{wanted}>")
+                    list_type = wanted
+                rendered.append(f"<li>{item}</li>")
             else:
                 if in_list:
-                    rendered.append("</ul>")
+                    rendered.append(f"</{list_type}>")
                     in_list = False
-                if line.strip():
-                    rendered.append(f"<div>{line}</div>")
+                    list_type = None
+                if stripped:
+                    rendered.append(f"<p>{line}</p>")
         if in_list:
-            rendered.append("</ul>")
-        result = "".join(rendered)
+            rendered.append(f"</{list_type}>")
+        result = "".join(rendered) if rendered else "<p></p>"
         for index, block in enumerate(code_blocks):
             result = result.replace(f"@@CODE{index}@@", block)
         return result
