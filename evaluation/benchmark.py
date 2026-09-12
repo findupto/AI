@@ -32,6 +32,7 @@ def evaluate_cases(cases: list[dict[str, object]]) -> dict[str, object]:
     return {
         "count": len(results),
         "passed": passed,
+        "failed": len(results) - passed,
         "pass_rate": passed / len(results) if results else 0.0,
         "results": results,
     }
