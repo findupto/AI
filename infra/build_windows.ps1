@@ -2,10 +2,10 @@ $ErrorActionPreference = 'Stop'
 
 python -m pip install --upgrade pip
 python -m pip install -e '.[local,dev]'
+python -m PyInstaller --noconfirm --clean infra/FinduptoAI.spec
 
-python -m PyInstaller --noconfirm --clean --name FinduptoAI --windowed `
-  --add-data 'config;config' `
-  run.py
+New-Item -ItemType Directory -Force -Path 'dist\FinduptoAI\models' | Out-Null
+New-Item -ItemType Directory -Force -Path 'dist\FinduptoAI\data' | Out-Null
 
-Write-Host 'Build complete: dist/FinduptoAI/'
-Write-Host 'Put a GGUF model in dist/FinduptoAI/models/ or set FINDUPTO_MODEL_PATH.'
+Write-Host 'Build complete: dist\FinduptoAI\FinduptoAI.exe'
+Write-Host 'Put a GGUF model in dist\FinduptoAI\models\model.gguf or set FINDUPTO_MODEL_PATH.'
