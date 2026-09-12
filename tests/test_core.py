@@ -21,3 +21,31 @@ def test_python_tool_timeout_and_bounded_builtins():
     ok, message = run_python("while True: pass", timeout=1)
     assert ok is False
     assert "timed out" in message.lower()
+
+
+def test_knowledge_search_handles_natural_language(tmp_path):
+    from knowledge.store import KnowledgeStore
+
+    db = tmp_path / "knowledge.db"
+    k = KnowledgeStore(str(db), chunk_size=20, overlap=3)
+    k.ingest("local:test", "standalone local AI retrieval provenance")
+    rows = k.search("Where is the retrieval provenance?")
+    assert rows and rows[0]["source"] == "local:test"
+
+
+def test_memory_store_is_thread_safe(tmp_path):
+    from memory.store import MemoryStore
+    import threading
+
+    store = MemoryStore(str(tmp_path / "memory.db"))
+
+    def write(i):
+        store.add("user", f"message-{i}")
+
+    threads = [threading.Thread(target=write, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(store.recent(20)) == 8
