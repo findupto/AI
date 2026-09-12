@@ -8,8 +8,12 @@ from knowledge.store import KnowledgeStore
 from memory.store import MemoryStore
 from models.local_llm import LocalLLM
 from orchestrator.agent import Agent, Tool, ToolRequest
+from orchestrator.audit import AuditLog
+from orchestrator.research import ResearchEngine
 from security.policy import Policy
 from tools.python_tool import run_python
+from tools.shell_tool import run_shell
+from localdrive.workspace import LocalDrive
 
 SYSTEM = """You are Findupto AI, a local-first standalone assistant. Be accurate and explicit about uncertainty. Use supplied knowledge context when relevant. Do not claim to have performed an action unless a tool actually performed it. High-impact actions require confirmation. Keep core intelligence local and treat network access as optional."""
 
@@ -28,9 +32,20 @@ class Orchestrator:
         self.llm = LocalLLM(config, base_dir=self.base_dir)
         self.memory = MemoryStore(self._data_path(config["memory"]["database"]))
         self.knowledge = KnowledgeStore(self._data_path(config["knowledge"]["database"]), config["knowledge"]["chunk_size"], config["knowledge"]["chunk_overlap"])
+        drive = config.get("localdrive", {})
+        self.localdrive = LocalDrive(self._data_path(drive.get("root", "LocalDrive")), drive.get("max_file_bytes", 2_000_000), drive.get("max_read_bytes", 1_000_000))
+        self.audit = AuditLog(self._data_path(config.get("audit", {}).get("path", "data/audit.jsonl")))
+        self.research = ResearchEngine(self.policy)
         self.agent = Agent(self.llm, self.policy)
         self.session_id = self.memory.list_sessions()[0]["id"]
         self.agent.register(Tool("python", "Run bounded Python for calculations and local text processing", self.execute_python, requires_confirmation=True))
+        self.agent.register(Tool("list_directory", "List files in the LocalDrive workspace", self.tool_list_directory, requires_confirmation=False))
+        self.agent.register(Tool("read_file", "Read a text file from LocalDrive", self.tool_read_file, requires_confirmation=False))
+        self.agent.register(Tool("search_files", "Search LocalDrive filenames and text", self.tool_search_files, requires_confirmation=False))
+        self.agent.register(Tool("inspect_project", "Inspect a LocalDrive project", self.tool_inspect_project, requires_confirmation=False))
+        self.agent.register(Tool("write_file", "Create or replace a LocalDrive project file", self.tool_write_file, requires_confirmation=True))
+        self.agent.register(Tool("shell", "Run a local project command", self.execute_shell, requires_confirmation=True))
+        self.agent.register(Tool("research", "Fetch a web page when network policy allows it", self.tool_research, requires_confirmation=True))
 
     def _data_path(self, value: str) -> str:
         path = Path(value).expanduser()
@@ -99,6 +114,38 @@ class Orchestrator:
             return False, "Python tool requires explicit user confirmation in the desktop UI."
         return run_python(code, self.policy.python_timeout())
 
+    def tool_list_directory(self, relative: str):
+        return True, json.dumps(self.localdrive.list_directory(relative or "."), ensure_ascii=False)
+
+    def tool_read_file(self, relative: str):
+        return True, self.localdrive.read_file(relative)
+
+    def tool_search_files(self, query: str):
+        return True, json.dumps(self.localdrive.search(query), ensure_ascii=False)
+
+    def tool_inspect_project(self, relative: str):
+        return True, json.dumps(self.localdrive.inspect_project(relative or "."), ensure_ascii=False)
+
+    def tool_write_file(self, tool_input: str):
+        if "\n" not in tool_input:
+            return False, "Expected INPUT as relative/path followed by a newline and file content."
+        relative, text = tool_input.split("\n", 1)
+        written = self.localdrive.write_file(relative.strip(), text)
+        self.audit.record("write_file", path=written)
+        return True, f"Wrote LocalDrive/{written}"
+
+    def execute_shell(self, command: str):
+        if not self.policy.shell_allowed():
+            return False, "Shell execution is disabled by policy. Enable it explicitly before approving commands."
+        ok, result = run_shell(command, self.policy.shell_timeout(), str(self.localdrive.root))
+        self.audit.record("shell", command=command, ok=ok)
+        return ok, result
+
+    def tool_research(self, url: str):
+        result = self.research.fetch(url.strip())
+        self.audit.record("research", url=url.strip(), ok=result.get("ok", False))
+        return result.get("ok", False), result.get("text", result.get("error", "Unknown research error"))
+
     def prepare_agent_request(self, user_text: str):
         self._record_user(user_text)
         context, sources = self._context(user_text)
@@ -134,12 +181,14 @@ class Orchestrator:
             return "Tool is no longer available."
         if not tool.requires_confirmation:
             return "This tool did not require approval."
+        self.audit.record("tool_approved", tool=tool_name)
         ok, result = tool.handler(tool_input)
         final = self.agent.finalize_tool_result(user_text, ToolRequest(tool, tool_input), ok, result)
         self.memory.add("assistant", final, self.session_id)
         return final
 
     def reject_tool(self, user_text: str, tool_name: str, tool_input: str):
+        self.audit.record("tool_rejected", tool=tool_name)
         message = f"I did not run the '{tool_name}' tool. The requested action was rejected."
         self.memory.add("assistant", message, self.session_id)
         return message
